@@ -49,10 +49,68 @@ import {
   wideWidth,
   withColumnWidth,
   withFixedHeight,
+  SPLIT_BOOK_FLOOR,
+  SPLIT_LAYOUT_KEY,
+  SPLIT_OPEN_FRAME,
+  SPLIT_TICKS_FLOOR,
+  CHART_CARD_INSET,
+  DRAW_BAR_WIDTH,
+  EXPAND_STRIP_WIDTH,
+  PANES_GAP,
+  SIDE_PANE_MIN,
+  normalizeSplitLayout,
+  splitArrangement,
+  splitTopLayout,
   type CardKey,
   type SlotKey,
 } from './tradeLayout'
 import { FUTURES_TABS, OPTION_TABS, type SlotTabs, type Tab } from './tradeScreenUtils'
+import { CardHeadFold } from './CardHeadFold'
+
+/* 아래 칸 머리 띠가 탭 하나로 줄었을 때, 고르지 않은 탭의 건수 알약에 적는 짧은
+   이름(`CardHeadFold`). 없는 카드는 전체 이름을 씁니다. */
+const CARD_SHORT_LABEL: Partial<Record<CardKey, string>> = {
+  orders: '주문',
+  positions: '미결제',
+}
+
+/* 두 칸 확대에서 접힌 띠에 적는 카드와 그 이름. 시세체결은 호가 아래 붙은 것이라
+   따로 적지 않습니다. */
+const STRIP_CARDS = ['book', 'form', 'positions'] as const
+const STRIP_LABEL: Record<(typeof STRIP_CARDS)[number], string> = {
+  book: '호가',
+  form: '주문',
+  positions: '미결제',
+}
+
+/** 행 경계 하나 — 어느 경계인지, 읽어 줄 이름, 서는 트랙, 붙는 카드 끝. */
+interface RowSplit {
+  column: 'left' | 'r1' | 'orders'
+  ariaLabel: string
+  gridColumn: number | string
+  edge: { alignSelf: 'start' | 'end'; marginTop?: number; marginBottom?: number; height?: number }
+}
+
+/** 주문 폼 카드가 입력 칸을 굴리지 않고 다 보이는 높이(px) — 머리 띠, 폼의 위아래
+ *  여백, 폼 안 줄들의 제 높이를 더합니다. 입력 칸은 제 안에서 굴리는 칸이라 보이는
+ *  높이가 아니라 내용 높이로 셉니다. 카드가 없거나 아직 안 그려졌으면 0 입니다.
+ *
+ *  두 칸 배치에서 주문 내역을 늘릴 수 있는 끝이 이 값입니다. 바닥(`CARD_MIN.form`)은
+ *  입력 칸이 굴러가는 높이라, 그 끝까지 늘리면 사용자가 늘린 만큼 폼이 굴립니다. */
+function formNaturalHeight(card: Element | null): number {
+  const head = card?.querySelector<HTMLElement>(':scope > .card-head')
+  const form = card?.querySelector<HTMLElement>(':scope > .order-form')
+  if (!head || !form) return 0
+  const style = getComputedStyle(form)
+  let total = head.offsetHeight + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+  for (const child of Array.from(form.children) as HTMLElement[]) {
+    const own = getComputedStyle(child)
+    if (own.display === 'none' || own.position === 'absolute' || own.position === 'fixed') continue
+    const height = child.classList.contains('order-fields') ? child.scrollHeight : child.offsetHeight
+    total += height + (parseFloat(own.marginTop) || 0) + (parseFloat(own.marginBottom) || 0)
+  }
+  return Math.ceil(total)
+}
 
 /** 카드 배치 — 어느 카드가 어느 자리에 서는지, 끌어서 옮기기와 경계 크기 조절, 접기·확대. */
 export function useTradeGrid({
@@ -80,8 +138,9 @@ export function useTradeGrid({
   const [slotTabs, setSlotTabs] = useState<SlotTabs>({})
   /* 패널 편집 — 무엇을 보일지와 어느 슬롯에 둘지. 자리 교환은 손잡이가 합니다. */
   const [editorOpen, setEditorOpen] = useState(false)
-  /* 차트 확대. 왼쪽 열이 차트 하나가 됩니다 — 탭 알약과 아래 칸이 숨고,
-     호가와 주문 폼은 그대로입니다. 저장하지 않습니다: 다음에 열었을 때 주문
+  /* 차트 확대. 한 칸이면 왼쪽 열이 차트 하나가 됩니다 — 탭 알약과 아래 칸이 숨고,
+     호가와 주문 폼은 그대로입니다. 두 칸이면 차트가 화면 폭 전체를 쓰고 오른쪽
+     열이 띠로 접힙니다(`stripped`). 저장하지 않습니다: 다음에 열었을 때 주문
      내역이 안 보이는 화면으로 시작하면 왜 없는지 찾게 됩니다. */
   const [chartExpanded, setChartExpanded] = useState(false)
   /* 패널 배치 — 카드 여섯이 슬롯 넷 중 어디에 서는지와 경계 크기. 끌어서 바꾸고 저장합니다.
@@ -108,7 +167,10 @@ export function useTradeGrid({
      주고, 창은 그대로인데 옆의 최근 본 레일이 열려 본문만 좁아지는 것은 칸
      쪽이 알려 줍니다. 하나만 두면 나머지 경우에 폭이 옛 값에 멈춰, 창을
      넓혀도 열이 좁은 채로 남습니다. */
-  const [room, setRoom] = useState({ width: 0, bar: 0 })
+  /* 뒤의 셋은 두 칸 배치가 씁니다 — 격자가 지금 보이는 높이(주문 내역 높이의
+     상한과 호가가 양보하는 몫), 앱 틀의 높이(주문 내역을 처음에 펼칠지), 주문 폼이
+     입력 칸을 굴리지 않고 서는 높이(주문 내역을 늘릴 수 있는 끝)입니다. */
+  const [room, setRoom] = useState({ width: 0, bar: 0, height: 0, frame: 0, form: 0 })
   /* 마지막으로 잰 값. 창을 끄는 동안 알림은 프레임마다 오는데 그중 대부분은
      치수가 그대로입니다 — 같은 값으로 상태를 건드리면 그때마다 화면을 다시
      그리려 들고, 차트가 그 렌더를 따라 다시 그립니다. */
@@ -119,8 +181,23 @@ export function useTradeGrid({
     if (!grid || !outer) return
     const measure = () => {
       const bar = grid.offsetWidth - grid.clientWidth
-      const next = { width: Math.max(0, outer.clientWidth - bar), bar }
-      if (next.width === roomRef.current.width && next.bar === roomRef.current.bar) return
+      const next = {
+        width: Math.max(0, outer.clientWidth - bar),
+        bar,
+        height: grid.clientHeight,
+        frame: grid.closest('.app-shell')?.clientHeight ?? 0,
+        form: formNaturalHeight(grid.querySelector('.trade-card[data-card="form"]')),
+      }
+      const held = roomRef.current
+      if (
+        next.width === held.width &&
+        next.bar === held.bar &&
+        next.height === held.height &&
+        next.frame === held.frame &&
+        next.form === held.form
+      ) {
+        return
+      }
       roomRef.current = next
       setRoom(next)
     }
@@ -306,7 +383,8 @@ export function useTradeGrid({
   const startColumnResize =
     (column: 'r1' | 'r2', sign: 1 | -1) => (event: PointerEvent<HTMLDivElement>) => {
     const element = event.currentTarget
-    const base = fitLayout(layout, room.width)
+    /* 두 칸 배치에서는 두 칸 배치의 열 폭을 바꿉니다 — 한 칸 배치의 폭은 그대로입니다. */
+    const base = fitLayout(arrangement ? splitTopLayout(layout, splitLayout, arrangement) : layout, room.width)
     const start = columnWidth(base, column)
     const min = columnMinWidth(base, column)
     const max = columnMaxWidth(base, column, room.width)
@@ -319,7 +397,11 @@ export function useTradeGrid({
     drag(event, (dx) => {
       const next = withColumnWidth(base, column, start + sign * dx, room.width)
       const width = columnWidth(next, column)
-      storeLayout(next)
+      if (arrangement) {
+        storeSplitLayout({ ...splitLayout, columns: { r1Width: next.r1Width, r2Width: next.r2Width } })
+      } else {
+        storeLayout(next)
+      }
       element.dataset.limit =
         width <= min ? (sign === -1 ? 'left' : 'right') : width >= max ? (sign === -1 ? 'right' : 'left') : ''
       setResizeHint(
@@ -333,7 +415,11 @@ export function useTradeGrid({
      서는 높이는 서로 다릅니다(왼쪽은 차트 아래, 오른쪽은 호가 아래).
      말풍선에 적는 값은 **끌고 있는 위 칸의 높이**입니다 — 손이 잡은 것이
      경계이고, 그 경계가 정하는 것은 위 칸의 크기입니다. */
-  const startRowResize = (column: 'left' | 'r1') => (event: PointerEvent<HTMLDivElement>) => {
+  const startRowResize = (column: 'left' | 'r1' | 'orders') => (event: PointerEvent<HTMLDivElement>) => {
+    if (column === 'orders') {
+      startOrdersResize(event)
+      return
+    }
     const element = event.currentTarget
     const base = fitLayout(layout, room.width)
     const start = fixedHeight(base, column, subjectShown)
@@ -365,7 +451,10 @@ export function useTradeGrid({
      이유는 없습니다. 몇 건 있는지는 탭 옆 숫자가 말하고, 펼치는 것은 한 번
      누르면 됩니다 — 그 선택은 남습니다. */
   const [chartBottomOpen, setChartBottomOpen] = useStoredState('nh.trade.chartBottomOpen', false)
-  const subjectShown = chartExpanded && splitState.split
+  const subjectShown = splitState.split
+  /* 두 칸에서 그리기 띠를 켜 두었는지. 창마다 달라도 되는 보기 습관이라 이 브라우저에만
+     남깁니다. 한 칸에서는 쓰지 않습니다 — 한 칸은 확대에서만 그리기 띠가 섭니다. */
+  const [drawTools, setDrawTools] = useStoredState('nh.trade.drawTools', false)
 
   const tabs = kind === 'option' ? OPTION_TABS : FUTURES_TABS
   const activeTab: Tab = (tabs as readonly Tab[]).includes(tab) ? tab : tabs[0]
@@ -386,32 +475,134 @@ export function useTradeGrid({
     !isSlotEmpty(layout, 'lb') &&
     !layout.slots.lb.includes('chart')
   const bottomOpen = activeTab === '체인' ? chainBottomOpen : chartBottomOpen
-  const setBottomOpen = activeTab === '체인' ? setChainBottomOpen : setChartBottomOpen
+  const setOnePaneBottomOpen = activeTab === '체인' ? setChainBottomOpen : setChartBottomOpen
   const collapsed = collapsible && !bottomOpen
   /* 확대는 차트 탭에서만 뜻이 있습니다. 확대 중에는 탭 알약이 숨어 탭을 못
      바꾸므로 두 번째 조건은 지금 닿지 않습니다 — 옵션에서 체인 탭으로 열리는
      경로처럼 탭이 밖에서 바뀌는 경우를 막는 방어입니다. */
   const expandedChart = chartExpanded && activeTab === '차트'
 
+  /* 두 칸 배치. 차트를 두 칸으로 보는 동안(확대가 아닐 때) 차트가 왼쪽 열 전체를
+     쓰고 왼쪽 아래 카드가 오른쪽 두 열 아래로 갑니다(`tradeLayout` 의 두 칸 배치).
+     두 칸 배치의 펼침·높이·열 폭은 한 칸 배치와 따로 남깁니다. */
+  const [storedSplitLayout, storeSplitLayout] = useUiState<unknown>(SPLIT_LAYOUT_KEY, null)
+  const splitLayout = useMemo(() => normalizeSplitLayout(storedSplitLayout), [storedSplitLayout])
+  const splitShape = splitArrangement(layout)
+  const arrangement = splitState.split && !expandedChart ? splitShape : null
+  const splitOn = arrangement !== null
+  /* 두 칸을 확대한 화면. 차트가 화면 폭 전체를 쓰고, 오른쪽 열(호가·시세체결·주문 폼·
+     주문 내역)은 띠 하나로 접힙니다. 접힌 카드는 화면에서만 빠지고 그대로 살아 있어,
+     입력하던 주문 값이 펼쳤을 때 그대로입니다. 띠를 누르면 확대가 풀립니다.
+     오른쪽 열이 비어 있으면 접을 것이 없어 한 칸 확대와 같은 모양입니다. */
+  const stripped = splitState.split && expandedChart && splitShape !== null
+  const splitBottom = arrangement?.bottom ?? null
+
   /* 확대 중에는 카드가 기본 자리에 섭니다. 폭은 사용자가 끌어 둔 값을 그대로
      쓰되, 바닥은 그 자리에 실제로 선 카드의 것으로 잽니다 — 자리와 바닥이
-     어긋나면 호가 열이 차트의 바닥 폭만큼 벌어집니다. */
+     어긋나면 호가 열이 차트의 바닥 폭만큼 벌어집니다.
+     두 칸 배치에서는 아래로 옮겨 간 자리를 뺀 위쪽 격자로 폭과 바닥을 잽니다. */
   const shownLayout = fitLayout(
-    expandedChart ? { ...layout, slots: DEFAULT_LAYOUT.slots } : layout,
+    expandedChart
+      ? { ...layout, slots: DEFAULT_LAYOUT.slots }
+      : arrangement
+        ? splitTopLayout(layout, splitLayout, arrangement)
+        : layout,
     room.width,
   )
+
+  /* 좌우 두 칸에서 칸 하나가 받는 폭. 두 칸 배치의 차트 열 폭으로 셉니다 — 지금 한
+     칸이어도 좌우를 고르면 그 배치로 서기 때문입니다. 그리기 띠를 켜 두었으면 그만큼
+     좁습니다. 창을 아직 재지 못했으면 좁다고 하지 않습니다. */
+  const sideCardWidth = wideWidth(
+    fitLayout(splitShape ? splitTopLayout(layout, splitLayout, splitShape) : layout, room.width),
+    room.width,
+  )
+  const sidePaneWidth = (sideCardWidth - CHART_CARD_INSET - (drawTools ? DRAW_BAR_WIDTH : 0) - PANES_GAP) / 2
+  const sideNarrow = room.width > 0 && sidePaneWidth < SIDE_PANE_MIN
 
   /* 지금 배치가 기본 그대로인지. 되돌릴 것이 없으면 되돌리는 단추가 비활성입니다. */
   const isDefaultLayout = JSON.stringify(layout) === JSON.stringify(DEFAULT_LAYOUT)
 
+  /* 두 칸 배치에서 아래 카드가 쓰는 폭 — 오른쪽 두 열과 그 사이 경계입니다. 넓은
+     열이 왼쪽 끝이면 두 열 사이 경계는 둘째, 오른쪽 끝이면 첫째입니다. */
+  const [splitGap1, splitGap2] = columnGaps(shownLayout)
+  const splitBottomWidth =
+    columnWidth(shownLayout, 'r1') +
+    columnWidth(shownLayout, 'r2') +
+    (arrangement?.columnOrder[0] === 'wide' ? splitGap2 : splitGap1)
+
   /* 슬롯이 실제로 받는 폭. 좁은 열 둘은 제 폭이 정해져 있고, 넓은 열은
      그 둘과 경계가 쓰고 남는 만큼입니다. */
   const slotWidth = (slot: SlotKey): number =>
-    slot === 'r1t' || slot === 'r1b'
-      ? columnWidth(shownLayout, 'r1')
-      : slot === 'r2'
-        ? columnWidth(shownLayout, 'r2')
-        : wideWidth(shownLayout, room.width)
+    splitOn && slot === splitBottom
+      ? splitBottomWidth
+      : slot === 'r1t' || slot === 'r1b'
+        ? columnWidth(shownLayout, 'r1')
+        : slot === 'r2'
+          ? columnWidth(shownLayout, 'r2')
+          : wideWidth(shownLayout, room.width)
+
+  /* ── 두 칸 배치의 높이 ──
+     위쪽(호가·시세체결 | 주문 폼)이 바닥까지 받고, 그 아래에 주문 내역이 섭니다.
+     주문 내역을 늘리면 **시세체결이 먼저** 머리와 여섯 줄까지 줄고, 그다음 **호가가**
+     줄어 제 안에서 굴립니다. 주문 폼은 줄이지 않습니다 — 그래서 주문 내역 높이의
+     상한은 주문 폼의 아래 끝(입력 칸을 굴리기 시작하는 자리)이 닿는 곳입니다. */
+  const onlyCards = (slot: SlotKey, card: CardKey) =>
+    shownLayout.slots[slot].length > 0 && shownLayout.slots[slot].every((key) => key === card)
+  const splitTicksFloor = onlyCards('r1b', 'ticks') ? SPLIT_TICKS_FLOOR : slotMinHeight(shownLayout, 'r1b')
+  const splitBookFloor = onlyCards('r1t', 'book')
+    ? Math.min(SPLIT_BOOK_FLOOR, slotFloor(shownLayout, 'r1t', subjectShown))
+    : slotFloor(shownLayout, 'r1t', subjectShown)
+  const r1Both = !isSlotEmpty(shownLayout, 'r1t') && !isSlotEmpty(shownLayout, 'r1b')
+  const splitR1Min = r1Both
+    ? splitBookFloor + GUTTER + splitTicksFloor
+    : Math.max(slotFloor(shownLayout, 'r1t', subjectShown), slotMinHeight(shownLayout, 'r1b'))
+  /* 위쪽이 부르는 바닥. 호가가 양보한 뒤의 값이라 보통은 주문 폼의 바닥입니다 —
+     창이 낮아 여기까지 내려오면 폼은 입력 칸을 굴리고, 그보다 낮으면 격자가
+     스크롤합니다. */
+  const splitTopMin = Math.max(splitR1Min, slotMinHeight(shownLayout, 'r2'))
+  /* 주문 내역을 늘릴 때 위쪽이 지키는 높이. 주문 폼은 줄이지 않으므로 폼이 입력
+     칸을 굴리지 않는 높이(`formNaturalHeight`)까지 지킵니다. 못 재면 바닥입니다. */
+  const splitTopNeed = Math.max(
+    splitTopMin,
+    shownLayout.slots.r2.includes('form') ? room.form : 0,
+  )
+  const splitBottomFloor = splitBottom ? slotMinHeight(layout, splitBottom) : 0
+  /* 고른 적이 없으면 앱 틀이 넉넉할 때만 펼친 채로 시작합니다. */
+  const ordersOpen = splitLayout.ordersOpen ?? room.frame >= SPLIT_OPEN_FRAME
+  /* 주문 내역 높이의 상한. 창을 아직 재지 못했으면 걸지 않습니다. 창이 낮아
+     바닥조차 안 들어가면 바닥으로 서고 격자가 세로로 스크롤합니다 — 한 칸 배치와
+     같은 규칙입니다. */
+  const ordersCeiling =
+    room.height > 0 ? Math.max(splitBottomFloor, room.height - GUTTER - splitTopNeed) : Number.POSITIVE_INFINITY
+  const ordersOpenHeight = Math.max(splitBottomFloor, Math.min(splitLayout.ordersHeight, ordersCeiling))
+  const ordersArea = !splitBottom ? 0 : ordersOpen ? ordersOpenHeight : HEAD_HEIGHT
+  const ordersReserve = splitBottom ? ordersArea + GUTTER : 0
+
+  /* 아래 카드를 접고 펼치기. 두 칸 배치는 제 값을 따로 남기고, 한 칸 배치는 탭마다
+     기억하는 지금 값을 씁니다. */
+  const setBottomOpen = (open: boolean) => {
+    if (splitOn) storeSplitLayout({ ...splitLayout, ordersOpen: open })
+    else setOnePaneBottomOpen(open)
+  }
+
+  /* 주문 내역의 위 경계. 위로 끌면 주문 내역이 커지고 위쪽 카드가 그만큼 줄어듭니다
+     (시세체결 → 호가 차례). 주문 폼의 아래 끝에 닿으면 멈추고 말풍선이 회색입니다. */
+  const startOrdersResize = (event: PointerEvent<HTMLDivElement>) => {
+    const element = event.currentTarget
+    const start = ordersOpenHeight
+    const floor = splitBottomFloor
+    const available = splitRef.current?.clientHeight ?? 0
+    const ceiling = available > 0 ? Math.max(floor, available - GUTTER - splitTopNeed) : start
+    setResizeHint({ x: event.clientX, y: event.clientY, text: `${start}px`, floor: floor >= ceiling })
+    drag(event, (_dx, dy) => {
+      const want = Math.round(start - dy)
+      const height = Math.min(Math.max(want, floor), ceiling)
+      storeSplitLayout({ ...splitLayout, ordersHeight: height })
+      element.dataset.limit = height <= floor ? 'up' : height >= ceiling ? 'down' : ''
+      setResizeHint((hint) => hint && { ...hint, text: `${height}px`, floor: want !== height })
+    })
+  }
 
   const slotsUsed = expandedChart ? DEFAULT_LAYOUT.slots : layout.slots
   const slotOfCard = (card: CardKey): SlotKey | null =>
@@ -456,9 +647,45 @@ export function useTradeGrid({
       COLUMN_SLOTS[key].includes(slot),
     )!
   const trackOf = (slot: SlotKey) => 1 + tracks.findIndex((t) => t.column === columnOfSlot(slot)) * 2
+  /* 두 칸 배치에서 아래 카드가 걸치는 트랙 — 오른쪽 두 열과 그 사이 경계입니다. */
+  const splitBottomColumn = (() => {
+    const ends = [trackOf('r1t'), trackOf('r2')]
+    return `${Math.min(...ends)} / ${Math.max(...ends) + 1}`
+  })()
+  /* 두 칸 배치의 행. 주문 내역이 오른쪽 아래를 차지하므로 위쪽 카드들은 그만큼 위에서
+     멈춥니다. 높이가 모자라면 격자가 세로로 스크롤합니다(한 칸 배치와 같은 규칙). */
+  const splitRowMin = arrangement
+    ? Math.max(slotMinHeight(shownLayout, arrangement.left), splitTopMin + ordersReserve)
+    : 0
+  const splitTopHeight = Math.max(room.height, splitRowMin) - ordersReserve
+  /* 호가의 높이. 한 칸 배치에서 끌어 둔 높이를 쓰되, 시세체결이 여섯 줄까지 줄고도
+     모자라면 호가가 양보합니다. */
+  const splitBookHeight = r1Both
+    ? Math.max(
+        splitBookFloor,
+        Math.min(fixedHeight(shownLayout, 'r1', subjectShown), splitTopHeight - GUTTER - splitTicksFloor),
+      )
+    : fixedHeight(shownLayout, 'r1', subjectShown)
+  const splitBookSqueezed =
+    splitOn && r1Both && splitBookHeight < slotFloor(shownLayout, 'r1t', subjectShown)
+  const splitCardPlace = (slot: SlotKey): CSSProperties => {
+    if (slot === splitBottom) return { gridColumn: splitBottomColumn, alignSelf: 'end', height: ordersArea }
+    if (slot === 'r2') return { alignSelf: 'stretch', marginBottom: ordersReserve }
+    if (slot === 'r1t' || slot === 'r1b') {
+      /* 짝이 비면 남은 카드는 제 크기 그대로 섭니다 — 한 칸 배치와 같습니다. */
+      if (!r1Both) return { alignSelf: 'start', height: slotFloor(shownLayout, slot, subjectShown) }
+      return slot === 'r1t'
+        ? { alignSelf: 'start', height: splitBookHeight }
+        : { alignSelf: 'stretch', marginTop: splitBookHeight + GUTTER, marginBottom: ordersReserve }
+    }
+    /* 차트가 선 자리 — 왼쪽 열 전체 높이입니다. */
+    return { alignSelf: 'stretch' }
+  }
   const cardStyle = (card: CardKey): CSSProperties => {
     const slot = slotOfCard(card)
     if (slot === null) return { display: 'none' }
+    /* 두 칸 확대에서는 차트만 첫 열에 서고 나머지 카드는 띠 뒤로 빠집니다. */
+    if (stripped) return card === 'chart' ? { gridColumn: 1, gridRow: 1, alignSelf: 'stretch' } : { display: 'none' }
     /* 한 자리에 상한이 다른 좁은 카드가 함께 서면(예: 호가 320 + 시세체결 200)
        열은 큰 쪽에 맞으므로 작은 쪽만 제 상한에서 멈춥니다. */
     const cap = CARD_MAX_WIDTH[card]
@@ -470,6 +697,7 @@ export function useTradeGrid({
       display: cardShown(card) ? undefined : 'none',
       ...(cap === undefined ? {} : ({ '--card-max': `${cap}px` } as CSSProperties)),
     }
+    if (arrangement) return { ...base, ...splitCardPlace(slot) }
     const column = slot === 'lt' || slot === 'lb' ? 'left' : slot === 'r2' ? null : 'r1'
     if (column === null) return { ...base, alignSelf: 'stretch' }
 
@@ -558,8 +786,10 @@ export function useTradeGrid({
   /* 차트 확대 — 차트가 왼쪽 열 전체가 됩니다. 「이 카드를 열 전체로」는 카드에
      대한 동작이라 도구 줄이 아니라 머리 띠에 섭니다. 확대 중에도 이 단추만은
      남습니다 — 없으면 돌아오는 길이 Esc 뿐입니다. */
+  const expandButtonRef = useRef<HTMLButtonElement>(null)
   const chartExpandButton = activeTab !== '차트' ? null : (
     <button
+      ref={expandButtonRef}
       type="button"
       className="btn btn-quiet card-head-btn"
       aria-pressed={expandedChart}
@@ -583,6 +813,9 @@ export function useTradeGrid({
       /* 주문 폼이 줄 이름과 입력칸을 나란히 못 두는 폭. 그때 폼은 줄 이름을
          입력칸 위로 올립니다(`trade.css` 의 `.card-form[data-tight]`). */
       'data-tight': card === 'form' && slot && slotWidth(slot) < FORM_ROOMY ? 'true' : undefined,
+      /* 두 칸 배치에서 주문 내역에 높이를 내준 호가. 사다리는 그대로 두고 카드 안에서
+         굴립니다(`trade.css` 의 `.card-book[data-squeezed]`). */
+      'data-squeezed': splitBookSqueezed && slot === 'r1t' ? 'true' : undefined,
       'data-drop': highlight(card) ? 'true' : undefined,
       'data-droppable': droppable(card) ? 'true' : undefined,
       'data-lifting': slot !== null && dragging === slot ? 'true' : undefined,
@@ -591,6 +824,10 @@ export function useTradeGrid({
 
   /* 카드 머리 띠의 왼쪽. 그 자리에 여럿이 서면 탭 줄이고, 하나면 이름 글자입니다 —
      띠 왼쪽의 식별 물체는 카드마다 정확히 하나이고 모양만 다릅니다. */
+  const pickSlotTab = (slot: SlotKey, key: CardKey) => {
+    setSlotTabs((current) => ({ ...current, [slot]: key }))
+    if (collapsedFor(key)) setBottomOpen(true)
+  }
   const slotTabStrip = (slot: SlotKey) => {
     const cards = slotsUsed[slot]
     if (cards.length < 2) return <span className="card-name">{CARD_LABEL[cards[0]]}</span>
@@ -603,10 +840,7 @@ export function useTradeGrid({
             type="button"
             className="tab"
             aria-current={open === key}
-            onClick={() => {
-              setSlotTabs((current) => ({ ...current, [slot]: key }))
-              if (slot === 'lb' && collapsed) setBottomOpen(true)
-            }}
+            onClick={() => pickSlotTab(slot, key)}
           >
             {CARD_LABEL[key]}
             {(counts[key] ?? 0) > 0 && <span className="tab-count">{counts[key]}</span>}
@@ -656,32 +890,42 @@ export function useTradeGrid({
 
   /* 접힘은 「왼쪽 아래 칸」에 붙은 규칙이라, 그 자리에 선 카드에만 걸립니다.
      같은 카드를 다른 자리로 옮기면 접히지 않습니다. */
-  const collapsibleFor = (card: CardKey) => collapsible && slotOfCard(card) === 'lb'
-  const collapsedFor = (card: CardKey) => collapsibleFor(card) && !bottomOpen
+  const collapsibleFor = (card: CardKey) =>
+    splitOn
+      ? splitBottom !== null && slotOfCard(card) === splitBottom
+      : collapsible && slotOfCard(card) === 'lb'
+  const collapsedFor = (card: CardKey) => collapsibleFor(card) && !(splitOn ? ordersOpen : bottomOpen)
 
-  /* 아래 두 카드의 머리 띠 오른쪽. 주문체결상세는 「언제부터」를 달고, 접을 수
-     있는 자리면 접기 단추가 그 뒤에 섭니다. 미결제약정에는 「언제부터」가 없습니다 —
-     알림으로 잇는 표가 아니라 체결마다 다시 조회하는 표라, 담긴 구간이 아니라
-     마지막 조회가 그 값이고 그것은 이미 목록 얼굴이 말합니다. */
-  const bottomHeadActions = (card: CardKey): ReactNode => {
-    const note =
-      card === 'orders' && ordersSince ? <span className="card-note">{ordersSince} 부터</span> : null
-    const fold = collapsibleFor(card) ? (
-      <button
-        type="button"
-        className="btn btn-quiet card-head-btn"
-        aria-expanded={!collapsedFor(card)}
-        onClick={() => setBottomOpen(collapsedFor(card))}
-      >
-        {collapsedFor(card) ? '펼치기' : '접기'}
-      </button>
-    ) : null
-    if (!note && !fold) return undefined
+  /* 아래 두 카드의 머리 띠. 주문체결상세는 「언제부터」를 달고, 접을 수 있는 자리면
+     접기 단추가 그 뒤에 섭니다. 미결제약정에는 「언제부터」가 없습니다 — 알림으로
+     잇는 표가 아니라 체결 때와 보는 동안 다시 조회하는 표라, 담긴 구간이 아니라 마지막 조회가
+     그 값이고 그것은 이미 목록 얼굴이 말합니다.
+     카드가 좁으면 띠가 제 안에서 차례로 접힙니다(`CardHeadFold`). */
+  const bottomHead = (card: CardKey): ReactNode => {
+    const slot = slotOfCard(card)
+    if (slot === null) return null
+    const cards = slotsUsed[slot]
+    const open = openIn(slot)
     return (
-      <>
-        {note}
-        {fold}
-      </>
+      <CardHeadFold
+        grip={grip(slot)}
+        strip={cards.length > 1 ? slotTabStrip(slot) : null}
+        tabs={cards.map((key) => ({
+          key,
+          label: CARD_LABEL[key],
+          short: CARD_SHORT_LABEL[key] ?? CARD_LABEL[key],
+          count: counts[key] ?? 0,
+          current: open === key,
+        }))}
+        name={<span className="card-name">{CARD_LABEL[card]}</span>}
+        note={card === 'orders' && ordersSince ? `${ordersSince} 부터` : null}
+        fold={
+          collapsibleFor(card)
+            ? { collapsed: collapsedFor(card), onToggle: () => setBottomOpen(collapsedFor(card)) }
+            : null
+        }
+        onPick={(key) => pickSlotTab(slot, key as CardKey)}
+      />
     )
   }
 
@@ -736,7 +980,8 @@ export function useTradeGrid({
          것이 확대의 뜻이라 그 폭을 손으로 정할 자리가 아닙니다. 좁은 열끼리의
          경계는 그대로 삽니다 — 확대해도 호가와 주문 폼의 폭은 사용자 것입니다. */
       const locked = expandedChart && (left === 'wide' || right === 'wide')
-      return gap > 0 && target ? { at, ...target, locked } : null
+      /* 두 칸 확대에서는 나눌 열이 없습니다 — 오른쪽 열이 띠로 접혀 있습니다. */
+      return gap > 0 && target && !stripped ? { at, ...target, locked } : null
     })
     .filter((split): split is NonNullable<typeof split> => split !== null)
   /* 행 경계가 설 자리. 위아래 둘 다 카드가 있는 열에만 섭니다 — 한쪽이 비면
@@ -753,16 +998,22 @@ export function useTradeGrid({
   )
       .filter((split) => {
         const [top, bottom] = split.column === 'left' ? (['lt', 'lb'] as const) : (['r1t', 'r1b'] as const)
+        if (stripped) return false
         if (!split.on || isSlotEmpty(shownLayout, top) || isSlotEmpty(shownLayout, bottom)) return false
         if (expandedChart && (hiddenWhileExpanded(top) || hiddenWhileExpanded(bottom))) return false
+        /* 두 칸 배치에서는 호가·시세체결 경계를 두지 않습니다. 그 높이는 한 칸 배치의
+           값이라 여기서 끌면 한 칸 배치가 바뀌고, 두 칸 배치에서는 주문 내역의 위
+           경계가 그 둘의 몫을 정합니다(시세체결 → 호가 차례로 양보). */
+        if (splitOn && split.column === 'r1') return false
         return true
       })
-      .map((split) => {
+      .map((split): RowSplit => {
         /* 경계는 **정해진 쪽 카드에 붙어** 섭니다 — 왼쪽 열은 아래 칸 위에,
            오른쪽 첫 열은 위 칸 아래에. 잡는 손은 그 칸의 크기를 바꿉니다. */
         const fixed = fixedHeight(shownLayout, split.column, subjectShown)
         return {
-          ...split,
+          column: split.column,
+          ariaLabel: `${split.label} 위아래 칸 높이 조절`,
           gridColumn: trackOf(split.column === 'left' ? 'lt' : 'r1t'),
           edge:
             COLUMN_GROW[split.column] === 'top'
@@ -770,25 +1021,47 @@ export function useTradeGrid({
               : ({ alignSelf: 'start', marginTop: fixed } as const),
         }
       })
+      /* 두 칸 배치의 주문 내역 위 경계. 펼쳐 있을 때만 섭니다 — 접힌 띠는 끌어도
+         커지지 않습니다. */
+      .concat(
+        splitOn && splitBottom && ordersOpen
+          ? [
+              {
+                column: 'orders',
+                ariaLabel: '주문 내역 높이 조절',
+                gridColumn: splitBottomColumn,
+                /* 경계 틈(12px)을 통째로 잡는 자리로 둡니다. */
+                edge: { alignSelf: 'end', marginBottom: ordersArea, height: GUTTER },
+              },
+            ]
+          : [],
+      )
   /* 왼쪽 아래 칸이 접혀 있으면 왼쪽 열은 그 칸의 머리 띠만큼만 부릅니다. 펼친
      높이로 부르면 격자가 그만큼 길어져, 접힌 띠가 스크롤 아래로 밀려납니다. */
   const leftFolded = isSlotEmpty(shownLayout, 'lt')
     ? HEAD_HEIGHT
     : slotMinHeight(shownLayout, 'lt') + GUTTER + HEAD_HEIGHT
-  const height = expandedChart
+  const height = stripped
+    ? slotMinHeight(shownLayout, 'lt')
+    : expandedChart
     ? Math.max(slotMinHeight(shownLayout, 'lt'), slotMinHeight(shownLayout, 'r2'))
-    : collapsed
+    : arrangement
+      ? splitRowMin
+      : collapsed
       ? Math.max(leftFolded, columnHeight(shownLayout, 'r1'), slotMinHeight(shownLayout, 'r2'))
       : gridHeight(shownLayout)
   /* 넓은 열의 바닥. 좁은 창에서는 제 카드 바닥보다 낮아질 수 있습니다(`wideFloor`). */
   const wideMin = wideFloor(shownLayout, room.width)
   const gridStyle = {
     /* 트랙 다섯 — 열 · 경계 · 열 · 경계 · 열. 차례는 사용자가 정한 열 순서를
-       그대로 따르고, 넓은 열만 남는 폭을 다 씁니다. */
-    gridTemplateColumns: tracks
-      .map((t) => (t.width === null ? `minmax(${wideMin}px, 1fr)` : `${t.width}px`))
-      .flatMap((track, at) => (at === 0 ? [track] : [`${at === 1 ? gutterLR : gutterRR}px`, track]))
-      .join(' '),
+       그대로 따르고, 넓은 열만 남는 폭을 다 씁니다.
+       두 칸 확대에서는 셋입니다 — 차트 · 경계 · 접힌 띠. */
+    gridTemplateColumns: stripped
+      ? `minmax(${wideMin}px, 1fr) ${GUTTER}px ${EXPAND_STRIP_WIDTH}px`
+      : tracks
+          .map((t) => (t.width === null ? `minmax(${wideMin}px, 1fr)` : `${t.width}px`))
+          .flatMap((track, at) => (at === 0 ? [track] : [`${at === 1 ? gutterLR : gutterRR}px`, track]))
+          .join(' '),
     /* 행은 하나입니다. 위아래로 갈리는 열은 카드가 제 높이와 위 여백으로
        세웁니다(`cardStyle`) — 두 열의 경계 높이가 서로 다르기 때문입니다.
        `minmax` 라 창이 더 높으면 행이 늘고, 늘어난 몫은 각 열의 아래 칸이
@@ -796,14 +1069,64 @@ export function useTradeGrid({
     gridTemplateRows: `minmax(${height}px, 1fr)`,
     /* 세로 막대가 잡아 둔 폭을 함께 셉니다. 이 값은 테두리까지 친 폭이라,
        막대 몫을 빼면 열들이 그만큼 밀려 가로 막대가 하나 더 생깁니다. */
-    minWidth:
-      wideMin +
-      columnWidth(shownLayout, 'r1') +
-      columnWidth(shownLayout, 'r2') +
-      gutterLR +
-      gutterRR +
-      room.bar,
+    minWidth: stripped
+      ? wideMin + GUTTER + EXPAND_STRIP_WIDTH + room.bar
+      : wideMin +
+        columnWidth(shownLayout, 'r1') +
+        columnWidth(shownLayout, 'r2') +
+        gutterLR +
+        gutterRR +
+        room.bar,
   }
+
+  /* 두 칸 확대에서 오른쪽 열이 접힌 띠. 무엇이 접혀 있는지를 세로로 적고, 미결제가
+     있으면 그 건수를 답니다 — 확대해 차트를 보는 동안에도 열린 계약이 있다는 것은
+     보여야 합니다. 띠 어디를 눌러도 펼쳐지고(= 확대가 풀리고) 접힌 카드가 그대로
+     돌아옵니다. 패널 편집으로 꺼 둔 카드는 띠에도 적지 않습니다. */
+  const stripCards = STRIP_CARDS.filter((card) => SLOTS.some((slot) => layout.slots[slot].includes(card)))
+  const stripCount = (card: (typeof STRIP_CARDS)[number]) =>
+    card === 'positions' && positions.length > 0 ? positions.length : null
+  /* 접힐 때 초점이 오른쪽 열 안(주문 수량 칸 등)에 있었으면 띠로 옮깁니다. 숨은 칸에
+     초점이 남으면 브라우저가 초점을 버려, 키보드로 쓰던 사람은 어디에 있는지 잃습니다.
+     띠는 그 카드들이 접힌 자리라 거기서 Enter 로 바로 펼칠 수 있습니다.
+     띠로 펼치면 띠가 사라지므로 초점은 같은 일을 되돌리는 확대 단추로 갑니다. */
+  const stripRef = useRef<HTMLButtonElement>(null)
+  const focusExpandAfterStrip = useRef(false)
+  useLayoutEffect(() => {
+    if (!stripped) {
+      if (focusExpandAfterStrip.current) expandButtonRef.current?.focus()
+      focusExpandAfterStrip.current = false
+      return
+    }
+    const focused = document.activeElement
+    const inFolded = focused instanceof HTMLElement && focused.closest('.trade-card:not(.card-chart)') !== null
+    if (inFolded) stripRef.current?.focus()
+  }, [stripped])
+  const expandStrip = stripped ? (
+    <button
+      ref={stripRef}
+      type="button"
+      className="expand-strip"
+      style={{ gridColumn: 3, gridRow: 1 }}
+      aria-label={`오른쪽 열 펼치기 — ${stripCards
+        .map((card) => STRIP_LABEL[card] + (stripCount(card) ? ` ${stripCount(card)}건` : ''))
+        .join('·')}`}
+      onClick={() => {
+        focusExpandAfterStrip.current = document.activeElement === stripRef.current
+        setChartExpanded(false)
+      }}
+    >
+      <span className="expand-strip-arrow" aria-hidden="true">
+        ⟨
+      </span>
+      {stripCards.map((card) => (
+        <span key={card} className="expand-strip-item">
+          <span className="expand-strip-name">{STRIP_LABEL[card]}</span>
+          {stripCount(card) && <span className="tab-count">{stripCount(card)}</span>}
+        </span>
+      ))}
+    </button>
+  ) : null
 
   return {
     setSlotTabs,
@@ -833,9 +1156,12 @@ export function useTradeGrid({
     chartTabsInBody,
     cardHead,
     collapsedFor,
-    bottomHeadActions,
+    cardShown,
+    bottomHead,
     colSplits,
     rowSplits,
     gridStyle,
+    /* 두 칸 보기가 차트 카드에 더하는 것들 — 확대 때 접힌 띠, 좌우가 좁은지, 그리기 띠. */
+    splitView: { expandStrip, sideNarrow, drawTools, setDrawTools },
   }
 }

@@ -68,7 +68,8 @@
   background: rgb(var(--ink) / 0.06);
   font-size: 12px;
   color: var(--text);
-  /* 한 줄입니다. 접히면 아래 시가·고가 줄을 덮습니다. 좁으면 이름 쪽이 줄어듭니다. */
+  /* 한 줄입니다. 접히면 아래 시가·고가 줄을 덮습니다. 좁으면 이름 쪽이 줄어들고,
+     이름이 바닥(64)에 닿기 전에 칸 폭 단계가 값을 뺍니다(아래). */
   white-space: nowrap;
   overflow: hidden;
   cursor: pointer;
@@ -97,18 +98,27 @@
   opacity: 0.8;
 }
 
-/* 아직 안 고른 축. 값이 아니라 할 일이라 헤더의 「행사가 선택」과 같은 크기로
- * 한 급 낮추고, 이름이 줄어들 때도 이 말은 남습니다 — 남은 일이 사라지면
- * 배지가 정해진 종목의 시세를 말하는 것으로 읽힙니다. */
+/* 값 자리에 서는 말 — 아직 안 고른 축(「행사가 선택」)이나 값을 못 받은 까닭.
+ * 값이 아니라 할 일·사정이라 헤더와 같은 크기로 한 급 낮춥니다. 값이 아니므로
+ * 시세를 말하는 것으로 읽히지 않습니다.
+ *
+ * 좁은 칸에서는 이름이 바닥(64)에 닿은 뒤 이 말이 끝에서부터 줄어들고, 가격을
+ * 빼는 단계(아래)에서 함께 빠집니다 — 이 말을 남겨 두면 봉 종류와 ▾ 가 배지
+ * 밖으로 밀려 이 칸의 종목을 바꿀 수 없게 됩니다. 같은 말은 헤더가 늘 말합니다. */
 .chart-badge-pending {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 11px;
   color: var(--text-dim);
 }
 
 
+/* 이름은 64px 아래로 안 줄어듭니다 — 「코…」 처럼 한 글자만 남으면 어느 종목인지
+ * 읽을 수 없습니다. 그보다 좁은 칸에서는 아래 단계가 값 쪽을 먼저 뺍니다. */
 .chart-badge b {
-  min-width: 0;
+  min-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -127,6 +137,23 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 칸이 좁으면 배지는 한 줄 그대로 두고 값 쪽부터 뺍니다. 범례와 같은 칸 폭
+ * 단계입니다(`trade.css` 의 `@container chartbox`). 349 이하에서는 등락을, 263
+ * 이하에서는 가격(값 자리의 말도)까지 뺍니다 — 둘 다 바로 위 헤더가 크게 말하고 있고, 배지가
+ * 말해야 하는 것은 이 칸이 어느 종목인지입니다. 봉 종류와 ▾ 는 남습니다. */
+@container chartbox (max-width: 349px) {
+  .chart-badge-change {
+    display: none;
+  }
+}
+
+@container chartbox (max-width: 263px) {
+  .chart-badge-price,
+  .chart-badge-pending {
+    display: none;
+  }
+}
+
 /* 아래 칸의 마지막 값 배지. 오른쪽 축 위에 선 색으로 섭니다. */
 .chart-mark {
   position: absolute;
@@ -140,6 +167,266 @@
   font-variant-numeric: tabular-nums;
   color: #ffffff;
   pointer-events: none;
+}
+
+/* 좁은 카드의 지표 묶음 단추(「지표 N ▾」)와 그 목록. 단추는 펼친 지표 단추와
+ * 같은 크기이고, 켜진 수는 초록 배지로 적습니다 — 이 앱에서 초록은 「사용자가
+ * 켠 것」입니다. */
+.chart-fold {
+  position: relative;
+  display: flex;
+}
+
+.chart-fold-btn[aria-expanded='true'] {
+  background: var(--active);
+  color: var(--text);
+}
+
+.chart-fold-count {
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--brand-soft);
+  font-size: 10px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--brand-text);
+}
+
+.chart-fold-chev {
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+/* 목록은 단추의 오른쪽 끝에 맞춰 아래로 뜹니다. 차트 라이브러리의 칸 경계
+ * 막대(쌓임 순서 20)보다 위에 서야 합니다 — 아래에 깔리면 목록이 경계에 걸칠 때
+ * 막대가 줄을 덮어, 스위치를 눌러도 지표가 안 바뀝니다. 차트 안의 다른 판과
+ * 같은 21 입니다. */
+.chart-fold-menu {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  z-index: 21;
+  width: 176px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow:
+    0 8px 24px rgb(var(--ink) / 0.14),
+    0 0 0 1px var(--border);
+}
+
+/* 줄 전체가 스위치의 이름표라 어디를 눌러도 켜고 끕니다. */
+.chart-fold-menu .ind-item {
+  cursor: pointer;
+}
+
+.chart-fold-menu .ind-item-name {
+  display: block;
+  height: 30px;
+  font-size: 12px;
+  line-height: 30px;
+  white-space: nowrap;
+}
+
+.chart-fold-menu .ind-item-name small {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.chart-fold-menu .ind-item-check {
+  text-align: center;
+}
+
+/* 종목이 없는 둘째 칸. 배지 하나만 서고 차트는 비웁니다. 주문 대상이 될 수 없는
+ * 칸이라 눌러도 대상이 옮겨 가지 않습니다 — 손 모양도 띄우지 않습니다. */
+.chart-box.is-empty,
+.chart-box.is-empty:hover {
+  box-shadow: inset 0 0 0 1.5px var(--divider);
+  cursor: default;
+}
+
+.chart-badge.chart-badge-empty {
+  top: 0;
+  color: var(--text-dim);
+}
+
+/* 옵션인데 행사가(또는 콜/풋)를 아직 안 고른 칸. 그릴 봉이 없어 빈 격자를 숨기고
+ * 배지와 가운데 안내 한 줄만 둡니다(`ChartView.tsx`). 위 빈 칸과 달리 주문 대상이
+ * 될 수 있는 칸이라 테두리·손 모양은 두 칸의 규칙 그대로입니다. */
+.chart-box.is-pending .chart-canvas {
+  visibility: hidden;
+}
+
+.chart-pending-note {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+/* 카드 머리 띠의 [한 칸 | 두 칸 ▾]. 확대 단추와 같은 높이로 붙어 섭니다. 눌린
+ * 쪽이 지금 칸 수입니다. */
+.split-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.split-switch-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-label);
+}
+
+.split-switch-item.is-one {
+  border-radius: 8px 0 0 8px;
+}
+
+/* 「두 칸」과 「▾」는 한 덩어리로 읽히게 붙여 세우고, 「한 칸」과의 사이에만
+ * 구분선을 둡니다. */
+.split-switch-item.is-two {
+  padding: 0 4px 0 6px;
+  box-shadow: -1px 0 0 var(--border);
+}
+
+.split-switch-item.is-chev {
+  padding: 0 6px 0 2px;
+  border-radius: 0 8px 8px 0;
+}
+
+/* 「▾」는 목록을 여는 단추라 눌림 상태가 없습니다. 두 칸일 때는 「두 칸」과 한
+ * 덩어리로 보이게 같은 바탕을 깝니다. */
+.split-switch.is-on .split-switch-item.is-chev {
+  background: var(--active);
+  color: var(--text);
+}
+
+/* 좁은 카드에서는 그림만 남깁니다. 「한 칸」의 좌우를 「두 칸」과 맞춥니다. */
+.split-switch.is-compact .split-switch-item.is-one {
+  padding: 0 6px;
+}
+
+.split-switch-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.split-switch-item[aria-pressed='true'] {
+  background: var(--active);
+  color: var(--text);
+}
+
+.split-switch-chev {
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+/* 칸 모양 그림. 한 칸은 네모 하나, 위아래는 납작한 둘, 좌우는 길쭉한 둘. */
+.split-icon {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.split-icon.is-stack {
+  flex-direction: column;
+}
+
+.split-icon i {
+  width: 12px;
+  height: 5px;
+  border: 1.5px solid currentColor;
+  border-radius: 1.5px;
+}
+
+.split-icon.is-one i {
+  height: 12px;
+  border-radius: 2px;
+}
+
+.split-icon.is-side i {
+  width: 5px;
+  height: 12px;
+}
+
+/* 놓임 고르기. 단추 오른쪽 끝에 맞춰 아래로 뜹니다. 차트 위에 걸치므로 차트
+ * 라이브러리의 칸 경계 막대(쌓임 순서 20)보다 위에 섭니다. */
+.split-switch-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 21;
+  /* 글에 맞춰 넓어집니다. 「좌우」 줄에 안내가 붙으면 그 한 줄이 들어가는 폭까지. */
+  width: max-content;
+  min-width: 150px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow:
+    0 8px 24px rgb(var(--ink) / 0.14),
+    0 0 0 1px var(--border);
+}
+
+.split-switch-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.split-switch-option:hover {
+  background: var(--hover);
+}
+
+.split-switch-option[aria-checked='true'] {
+  background: var(--active);
+  font-weight: 600;
+}
+
+/* 이름 아래 흐린 한 줄(「차트 열이 좁습니다」)이 붙을 수 있어 줄을 세로로 쌓습니다. */
+.split-switch-option-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.25;
+}
+
+.split-switch-option.is-narrow {
+  height: auto;
+  min-height: 30px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.split-switch-note {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+  /* 한 줄로 둡니다. 꺾이면 낱말 가운데서 끊겨 끝 글자 하나가 다음 줄에 남습니다. */
+  white-space: nowrap;
 }
 
 .draw-picker-remove {

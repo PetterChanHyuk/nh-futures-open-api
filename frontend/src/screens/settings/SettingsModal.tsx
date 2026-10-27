@@ -10,6 +10,7 @@ import {
 } from '../../data/environment'
 import { Credentials } from './Credentials'
 import { AlertSettingsGroup } from './AlertSettings'
+import { ViewSettingsGroup } from './ViewSettings'
 import './settings.css'
 
 /* 설정 — 거래 환경 전환과 인증 정보 편집.
@@ -49,10 +50,13 @@ interface Props {
      같습니다). 그때는 인증 정보 탭부터 열고 왜 열렸는지 한 줄로 말합니다 — 안
      그러면 창이 저절로 뜬 이유를 모릅니다. */
   needsCredentials?: boolean
+  /** 전략주문 탭을 끕니다. 그 화면을 보고 있으면 홈으로 옮긴 뒤에 끄고, 저장하지 않은
+   *  설정 확인 창에서 남기를 고르면 끄지 않습니다. 껐으면 `true` 입니다. */
+  onHideStrategy: () => Promise<boolean>
   onClose: () => void
 }
 
-export function SettingsModal({ needsCredentials, onClose }: Props) {
+export function SettingsModal({ needsCredentials, onHideStrategy, onClose }: Props) {
   const { status, active, config } = useEnvironment()
   const [tab, setTab] = useState<Tab>(needsCredentials ? '인증 정보' : '일반')
   /* 확인을 기다리는 대상. null 이면 묻는 중이 아닙니다. */
@@ -237,6 +241,7 @@ export function SettingsModal({ needsCredentials, onClose }: Props) {
             </div>
           )}
 
+          <ViewSettingsGroup onHideStrategy={onHideStrategy} />
           <AlertSettingsGroup />
         </>
       ) : (

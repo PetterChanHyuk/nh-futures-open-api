@@ -1,17 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { addDays, daysBetween, kstDateDash } from '../../lib/kst'
 import { ListHead, listFace, staleNote } from '../../lib/listFace'
-import { Count, MINUS, Num, NumOrDash, currencyDigits, fracWidth, numberParts, signSpace, toneOf } from '../../lib/number'
+import { Count, Num, NumOrDash, currencyDigits, fracWidth, signSpace } from '../../lib/number'
 import type {
   AccountOrder,
   OpenIntent,
   Position,
 } from '../../lib/types'
 import { expiryText } from '../../data/instruments'
-import { MARKET_BADGE, NO_CODE_REASON } from '../../lib/labels'
-import { useStoredState } from '../../lib/useStoredState'
+import { MARKET_BADGE, NO_CODE_REASON, NO_CREDENTIALS, NO_CREDENTIALS_HINT } from '../../lib/labels'
 import {
+  depositAt,
   depositMoney,
+  depositUnit,
   isDomesticDeposit,
   retryDeposit,
   failedDaysOf,
@@ -25,6 +26,7 @@ import {
   useListOnce,
   useMarketCredentialed,
   useReloadWhenShown,
+  useWatchPositions,
   type DepositMarket,
   type OverseasView,
   type Period,
@@ -38,6 +40,8 @@ import { assetsOf, realisedOf } from '../../data/depositHistory'
 import { toOrder, toOrderError, toPosition } from '../../data/accountRows'
 import { DepositPanel } from './DepositPanel'
 import { TrendPanel } from './TrendPanel'
+import { Money, Tone, moneyLabel } from './accountMoney'
+import { OverseasViewPicker, currencyChoices, shownView, useSavedOverseasView } from './overseasView'
 import { marketConfigured, useEnvironment } from '../../data/environment'
 import './account.css'
 
@@ -68,61 +72,6 @@ type Market = 'domestic' | 'overseas'
 const TABS: Record<Market, string[]> = {
   domestic: ['잔고', '예탁자산', '추이', '미체결', '주문오류'],
   overseas: ['잔고', '예탁자산', '추이', '미체결', '주문오류', '누적손익'],
-}
-
-/** 통화가 섞이므로 금액에는 늘 단위가 붙습니다. **코드를 모르면 아무것도 안
- *  답니다** — 무슨 돈인지 지어내지 않습니다.
- *
- *  소수 자릿수는 **줄의 통화**로 정합니다(`currencyDigits` — 엔은 0, 달러는 2).
- *  잔고 답에는 자릿수 칸이 없습니다. 코드를 모르면 값을 받은 그대로 적습니다. */
-function Money({
-  value,
-  currency,
-  signed,
-}: {
-  value: number
-  currency: string
-  signed?: boolean
-}) {
-  if (currency === 'KRW') {
-    return (
-      <>
-        <Count value={value} signed={signed} />원
-      </>
-    )
-  }
-  if (!currency) return <Count value={value} signed={signed} />
-  return (
-    <>
-      <Num value={value} decimals={currencyDigits(currency) ?? 2} signed={signed} /> {currency}
-    </>
-  )
-}
-
-/** `Money` 가 그리는 것과 같은 글자 — 칸이 좁아 말줄임될 때 마우스를 올리면
- *  보이는 전체 값입니다. */
-function moneyLabel(value: number, currency: string, signed = false): string {
-  if (currency === 'KRW') return `${numberParts(value, 0, null, signed)[0]}원`
-  /* 통화를 모르면 `Count` 처럼 값을 반올림하지 않고 그대로 적습니다. */
-  if (!currency) {
-    const sign = value < 0 ? MINUS : signed && value > 0 ? '+' : ''
-    return `${sign}${Math.abs(value).toLocaleString('ko-KR')}`
-  }
-  const [int, frac] = numberParts(value, currencyDigits(currency) ?? 2, null, signed)
-  return `${int}${frac} ${currency}`
-}
-
-/** 손익은 이 화면에서 색을 쓰는 유일한 값입니다. */
-function Tone({
-  value,
-  children,
-}: {
-  value: number
-  children: React.ReactNode
-}) {
-  /* 0 은 본문색입니다 — 손익 0 은 본전이라 값이고, 흐림은 값이 없는 「—」의
-     것입니다(`toneOf`). */
-  return <span className={toneOf(value) || undefined}>{children}</span>
 }
 
 /** 계좌 요약 띠 — 어느 탭에 있든 답이 필요한 여섯.
@@ -186,22 +135,9 @@ function AccountBand({ market, view }: { market: DepositMarket; view?: OverseasV
   }
 
   const domestic = isDomesticDeposit(value)
-  const rows = domestic ? value.items : value.groups
   const singles = domestic ? null : new Map(value.items.map((row) => [row.key, row.value]))
-  /* 해외 자릿수는 답이 실어 준 통화 자릿수가 먼저이고, 없으면 통화 코드로
-     정합니다 — 원화 환산이면 원이라 0 입니다. */
-  const decimals = domestic ? 0 : (value.decimals ?? currencyDigits(value.currency) ?? 2)
-  const currency = domestic ? 'KRW' : value.currency
-
-  const at = (key: string): number | null => {
-    const row = rows.find((one) => one.key === key)
-    if (row) return row.values[0] ?? null
-    if (domestic) {
-      const items = value.items.find((one) => one.key === key)
-      return items?.values[0] ?? null
-    }
-    return singles?.get(key) ?? null
-  }
+  const { decimals, currency } = depositUnit(value)
+  const at = (key: string): number | null => depositAt(value, key)
 
   /* 칸 이름은 받는 중 뼈대와 같은 표(`SUMMARY_LABELS`)에서 읽습니다. */
   const labels = SUMMARY_LABELS[market]
@@ -213,14 +149,14 @@ function AccountBand({ market, view }: { market: DepositMarket; view?: OverseasV
     { value: at('withdrawable') },
     { value: at('initialMargin') },
     { value: at('maintenanceMargin') },
-    /* 국내는 **추이와 같은 순손익**입니다(`realisedOf`) — 서버의 손익총액 칸은 늘 0 으로
-       와서 그날 손익을 말하지 못합니다. 무엇을 셈한 값인지는 이름에 마우스를 올리면
-       나옵니다. */
+    /* 국내는 **추이와 같은 순손익**입니다(`realisedOf`) — 그날 청산한 손익은 일일정산
+       전에는 손익총액에, 정산 뒤에는 정산차금에 담겨, 한 칸만 보면 어느 한 때의 손익을
+       놓칩니다. 무엇을 셈한 값인지는 이름에 마우스를 올리면 나옵니다. */
     domestic
       ? {
           value: realisedOf(value).value,
           toned: true,
-          hint: '선물정산차금 + 야간정산차금 − 수수료 − 야간수수료 · 정산 전에는 바뀔 수 있습니다',
+          hint: '선물정산차금 + 손익총액 + 야간정산차금 − 수수료 − 야간수수료 · 정산 전에는 손익총액에, 정산 뒤에는 정산차금에 담깁니다',
         }
       : { value: singles?.get('unrealisedPl') ?? null, toned: true },
   ]
@@ -359,7 +295,7 @@ const BAND_SLACK = 1
 
 /* 요약 띠 여섯 칸의 이름. 받는 중 뼈대와 받은 뒤 칸이 **이 표 하나**에서 읽어,
    받기 전후로 칸 이름이 바뀌지 않습니다. 여섯째가 시장마다 다릅니다 — 국내는 그날의
-   순손익(정산차금 − 수수료, 추이와 같은 셈)이고 해외는 응답의 평가손익이라, 같은
+   순손익(정산차금 + 손익총액 − 수수료, 추이와 같은 셈)이고 해외는 응답의 평가손익이라, 같은
    이름으로 묶으면 다른 값을 같은 것으로 부르게 됩니다. */
 const SUMMARY_LABELS: Record<DepositMarket, readonly string[]> = {
   domestic: ['예탁자산', '주문가능', '인출가능', '위탁증거금', '유지증거금', '오늘 순손익'],
@@ -635,6 +571,9 @@ function PositionsPanel({
 }) {
   const overseas = market === 'overseas'
   const entry = useListOnce<ServerPosition>(market, 'positions')
+  /* 이 표가 서 있는 동안 현재가·평가손익을 되풀이해 다시 받습니다. 잔고 탭을
+     떠나면 이 자리가 내려가 멈춥니다. */
+  useWatchPositions(market, true)
   /* 최초통보일을 받는 만기 조회. **해외 잔고에서만** 부릅니다(국내는 목록 쪽에서
      막힙니다). 못 받았거나 늦게 오면 만기 칸의 첫 줄만 섭니다 — 표를 막지 않고,
      와도 줄 차례는 그대로입니다. */
@@ -1193,101 +1132,6 @@ function Toned({ value, currency }: { value: number | null; currency?: string | 
   )
 }
 
-/* ── 해외 통화 보기 ────────────────────────────────────── */
-
-/** 남기는 모양. 원화 환산으로 볼 때도 고른 통화를 들고 있어, 통화별로 돌아오면
- *  그 통화가 그대로 섭니다. */
-interface StoredView {
-  mode: 'by-currency' | 'converted'
-  currency: string
-}
-
-const VIEW_KEY = 'nh.account.overseas.view'
-const DEFAULT_VIEW: StoredView = { mode: 'by-currency', currency: 'USD' }
-
-/** 남긴 값을 읽습니다. 모양이 틀리면(모르는 보기, 세 글자 대문자가 아닌 통화)
- *  기본값입니다 — 틀린 값으로 물으면 서버가 거절하고 화면이 빕니다. */
-function readView(raw: unknown): StoredView {
-  const value = (raw ?? {}) as Partial<StoredView>
-  const mode = value.mode === 'by-currency' || value.mode === 'converted' ? value.mode : null
-  const currency = typeof value.currency === 'string' && /^[A-Z]{3}$/.test(value.currency) ? value.currency : null
-  if (mode === null || currency === null) return DEFAULT_VIEW
-  return { mode, currency }
-}
-
-/** 고를 수 있는 통화. USD 가 늘 맨 앞이고 나머지는 글자 차례입니다. */
-function currencyChoices(codes: (string | null | undefined)[]): string[] {
-  const rest = new Set<string>()
-  for (const code of codes) {
-    const one = (code ?? '').trim().toUpperCase()
-    if (/^[A-Z]{3}$/.test(one) && one !== 'USD') rest.add(one)
-  }
-  return ['USD', ...[...rest].sort()]
-}
-
-/** 계좌 머리의 통화 보기 전환. 시장 전환과 같은 꼴(둘 중 하나)이고, 통화별이면
- *  곁에 통화를 고르는 칸이 섭니다. 고를 통화가 하나뿐이면 칸 대신 글자입니다.
- *
- *  **고를 통화를 알려고 해외 잔고를 부릅니다** — 잔고 탭과 같은 자리라 두 번
- *  나가지 않습니다. */
-function OverseasViewPicker({
-  saved,
-  shown,
-  currencies,
-  onChange,
-}: {
-  saved: StoredView
-  shown: OverseasView
-  currencies: string[]
-  onChange: (next: StoredView) => void
-}) {
-  useListOnce<ServerPosition>('overseas', 'positions')
-  const byCurrency = shown.mode === 'by-currency'
-  const current = shown.mode === 'by-currency' ? shown.currency : saved.currency
-  /* 잔고를 받기 전에는 남긴 통화가 목록에 없을 수 있습니다. 보이는 통화는 늘
-     고를 수 있게 넣어 둡니다. */
-  const options = currencies.includes(current) ? currencies : [...currencies, current]
-  return (
-    <div className="acct-view">
-      <div className="seg seg-even acct-view-mode">
-        <button
-          type="button"
-          className="seg-item"
-          aria-pressed={byCurrency}
-          onClick={() => onChange({ ...saved, mode: 'by-currency' })}
-        >
-          통화별
-        </button>
-        <button
-          type="button"
-          className="seg-item"
-          aria-pressed={!byCurrency}
-          onClick={() => onChange({ ...saved, mode: 'converted' })}
-        >
-          원화 환산
-        </button>
-      </div>
-      {byCurrency &&
-        (options.length > 1 ? (
-          <select
-            className="control acct-view-currency"
-            aria-label="통화"
-            value={current}
-            onChange={(event) => onChange({ mode: 'by-currency', currency: event.target.value })}
-          >
-            {options.map((code) => (
-              <option key={code} value={code}>
-                {code}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span className="acct-view-code">{current}</span>
-        ))}
-    </div>
-  )
-}
-
 interface Props {
   /** 계좌가 보는 시장. 앱이 따로 기억합니다 — 일반주문·종목 화면의 시장을 따라가지
    *  않고, 여기서 바꿔도 그 화면들은 그대로입니다. */
@@ -1333,10 +1177,9 @@ export function AccountScreen({
   const tabs = TABS[market]
   const active = tabs.includes(tab) ? tab : tabs[0]
 
-  /* 해외 금액을 보는 통화. 고른 것을 남깁니다(이 열쇠는 새로 생긴 것이라 옮겨 올
-     옛 값이 없습니다). 모양이 틀린 값은 기본(통화별 USD)으로 읽습니다. */
-  const [storedView, setStoredView] = useStoredState<unknown>(VIEW_KEY, DEFAULT_VIEW)
-  const saved = readView(storedView)
+  /* 해외 금액을 보는 통화. 고른 것을 남기고, 사이드바의 계좌 패널과 함께 씁니다.
+     모양이 틀린 값은 기본(통화별 USD)으로 읽습니다. */
+  const [saved, setStoredView] = useSavedOverseasView()
   /* 고를 수 있는 통화 — 해외 잔고 줄의 통화와 받아 둔 누적손익 줄의 통화, 그리고
      USD. **읽기만 합니다**: 잔고는 머리의 전환이 부르고, 누적손익은 그 탭이 부릅니다. */
   const heldPositions = useListEntry<ServerPosition>('overseas', 'positions')
@@ -1347,13 +1190,7 @@ export function AccountScreen({
     ...(heldUsd.rows ?? []).map((row) => row.currency),
     ...(heldKrw.rows ?? []).map((row) => row.currency),
   ])
-  /* 남긴 통화가 목록에 없으면 **화면만** 첫 통화로 봅니다. 남긴 값은 덮지 않습니다 —
-     그 통화의 줄이 다시 생기면 사용자가 고른 대로 돌아가야 합니다. 잔고를 아직
-     못 받았으면 목록을 모르므로 남긴 통화로 먼저 묻습니다. */
-  const shownCurrency =
-    heldPositions.rows === null || currencies.includes(saved.currency) ? saved.currency : currencies[0]
-  const view: OverseasView =
-    saved.mode === 'converted' ? { mode: 'converted' } : { mode: 'by-currency', currency: shownCurrency }
+  const view = shownView(saved, currencies, heldPositions.rows !== null)
 
   const open = (code: string, intent?: OpenIntent) => onOpenInstrument(code, intent)
 
@@ -1394,8 +1231,8 @@ export function AccountScreen({
     if (needsCredentials) {
       return (
         <div className="notice">
-          <p className="notice-title">인증 정보가 없습니다</p>
-          <p className="notice-reason">설정에서 인증 정보를 입력하세요</p>
+          <p className="notice-title">{NO_CREDENTIALS}</p>
+          <p className="notice-reason">{NO_CREDENTIALS_HINT}</p>
           <button
             type="button"
             className="btn btn-primary notice-action"

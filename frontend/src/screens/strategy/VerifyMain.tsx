@@ -237,7 +237,6 @@ export function renderMainChart({
               expanded={false}
               onExpandedChange={() => {}}
               split={false}
-              onSplitChange={() => {}}
               active={0}
               onActiveChange={() => {}}
               tradeMarks={marks}

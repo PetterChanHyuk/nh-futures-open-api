@@ -797,6 +797,19 @@ export async function loadRuns(): Promise<void> {
   }
 }
 
+/** 끝나지 않은 실행 수 — 설정에서 전략주문 탭을 끄기 전에 셉니다. 계좌
+ *  (모의·실전) 실행과 검증(앱 시뮬레이션) 실행을 모두 셉니다. 어느 쪽이든 끈 뒤에는 볼
+ *  자리가 없습니다.
+ *
+ *  **실행 목록을 새로 받아서 셉니다.** 전략주문 화면을 한 번도 열지 않았으면 들고 있는
+ *  목록이 비어 있을 수 있어, 그대로 세면 도는 실행을 0개로 잘못 셉니다. 목록을 받지
+ *  못하면 `null` 입니다 — 셀 수 없으면 끄지 않습니다. */
+export async function countActiveRuns(): Promise<number | null> {
+  await loadRuns()
+  if (state.verify.status !== 'ready') return null
+  return state.verify.runs.filter((run) => run.state !== 'ended').length
+}
+
 /** 그 실행의 한 벌. **그 실행의 칸이 있고 줄이 그 실행일 때만** 돌려줍니다 —
  *  없으면 `null` 이라 표는 비고, 남의 실행 값을 대신 그리지 않습니다. */
 export function snapshotOf(verify: VerifyState, id: string | null | undefined): VerifySnapshot | null {

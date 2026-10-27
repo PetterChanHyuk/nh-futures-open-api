@@ -20,6 +20,7 @@ import { useSyncExternalStore } from 'react'
 
 import { kstTradingDay } from '../lib/kst'
 import { moneyIn, toneOf } from '../lib/number'
+import { strategyTabShown } from './strategyTab'
 import { uiValue, useUiState } from './uiState'
 import {
   eventKey,
@@ -325,6 +326,17 @@ export function dismissAllToasts(): void {
   announce([])
 }
 
+/** 실행의 토스트를 모두 걷습니다 — 한 실행의 것과 여러 실행을 묶은 것 둘 다입니다.
+ *  주문 화면의 알림처럼 실행에 딸리지 않은 토스트는 남깁니다. 전략주문 탭을 끌 때
+ *  씁니다. */
+export function dismissRunToasts(): void {
+  const kept = toasts.filter((one) => one.runId === null && one.runIds === undefined)
+  if (kept.length !== toasts.length) announce(kept)
+  for (const [runId, id] of feedToast) {
+    if (!kept.some((one) => one.id === id)) feedToast.delete(runId)
+  }
+}
+
 /** 같은 실행·같은 종류가 이 안에 거듭되면 새로 쌓지 않고 본문을 바꿉니다. */
 const MERGE_MS = 5000
 
@@ -608,6 +620,11 @@ function fromEvent(event: VerifyEvent): Candidate | null {
  *  정지·시세 끊김만 냅니다. 모의·실전 계좌 실행은 늘 냅니다. */
 function wanted(kind: AlertKind, runId: string | null, settings: AlertSettings): boolean {
   if (runId === null) return true
+  /* 전략주문 탭이 꺼져 있으면 실행의 알림은 하나도 내지 않습니다 — 토스트·소리·운영체제
+     알림 모두 이 자리를 지납니다(「끊긴 동안 알림」 묶음도 실행마다 여기서 거릅니다).
+     본 것으로 두는 기록(`seen`)은 그대로 쌓이므로, 다시 켰을 때 끈 동안의 일이 한꺼번에
+     울리지 않습니다. */
+  if (!strategyTabShown()) return false
   const run = runsSeen.get(runId)
   if (run && isPaperRun(run) && !settings.simRuns) return kind === 'limit' || kind === 'feed'
   return true

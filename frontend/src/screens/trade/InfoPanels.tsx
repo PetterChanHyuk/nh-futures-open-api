@@ -456,7 +456,7 @@ export function MarketDataPanel({
   }
 
   return (
-    <div className="info-panel">
+    <div className="info-panel info-panel-daily">
       <Sheet
         rows={[
           ['시가', fixed(quote.open, d)],

@@ -343,30 +343,37 @@ export function InstrumentPicker(props: Props) {
       /* 팝오버 안을 눌러도 칸의 주문 대상은 안 바뀝니다. */
       onMouseDown={(event) => event.stopPropagation()}
     >
-      <input
-        className="control pick-input"
-        autoFocus
-        value={query}
-        placeholder={productMode ? '품목 이름이나 코드로 찾기' : '종목 이름이나 코드로 찾기'}
-        aria-label={productMode ? '품목 검색' : '종목 검색'}
-        onChange={(event) => setQuery(event.target.value)}
-        /* Enter 는 **목록 맨 위**를 엽니다 — 검색어가 품목에 걸렸으면 그 품목의
-           기본 월물입니다. 훑어 내려가는 커서가 없어 화면이 가리키는 줄이 곧
-           첫 줄이고, 빈 검색어에서는 아무 품목이나 열리므로 안 받습니다. */
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' || query.trim() === '') return
-          if (props.mode === 'product') {
-            if (!productHead) return
+      {/* 찾는 칸은 상단 종목 검색과 같은 얼굴(돋보기 + 채운 알약)입니다. 테두리가
+          있는 칸은 값을 넣는 칸이라, 모양만 보고도 둘이 갈립니다. */}
+      <div className="pick-search">
+        <span className="pick-search-icon" aria-hidden="true">
+          🔍
+        </span>
+        <input
+          className="pick-input"
+          autoFocus
+          value={query}
+          placeholder={productMode ? '품목 이름이나 코드로 찾기' : '종목 이름이나 코드로 찾기'}
+          aria-label={productMode ? '품목 검색' : '종목 검색'}
+          onChange={(event) => setQuery(event.target.value)}
+          /* Enter 는 **목록 맨 위**를 엽니다 — 검색어가 품목에 걸렸으면 그 품목의
+             기본 월물입니다. 훑어 내려가는 커서가 없어 화면이 가리키는 줄이 곧
+             첫 줄이고, 빈 검색어에서는 아무 품목이나 열리므로 안 받습니다. */
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || query.trim() === '') return
+            if (props.mode === 'product') {
+              if (!productHead) return
+              event.preventDefault()
+              pickProduct(productHead)
+              return
+            }
+            const first = rows[0]
+            if (!first) return
             event.preventDefault()
-            pickProduct(productHead)
-            return
-          }
-          const first = rows[0]
-          if (!first) return
-          event.preventDefault()
-          props.onPick(first.item)
-        }}
-      />
+            props.onPick(first.item)
+          }}
+        />
+      </div>
 
       {productMode ? (
         /* **머리글이 목록 안에 섭니다.** 시장이 둘 이상 설 수 있어, 머리글을

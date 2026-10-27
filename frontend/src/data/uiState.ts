@@ -4,7 +4,7 @@
  *  다시 깔아도 같은 것이 서야 하기 때문입니다. 관심종목과 화면 배치는 사용자가
  *  들인 시간이라 브라우저 저장소가 비워지는 일과 함께 사라지면 안 됩니다.
  *
- *  **여기 담는 것은 여섯뿐입니다.** 밝기·최근 본 종목처럼 그 컴퓨터, 그 창에서만
+ *  **여기 담는 것은 일곱뿐입니다.** 밝기·최근 본 종목처럼 그 컴퓨터, 그 창에서만
  *  뜻이 있는 것은 브라우저에 그대로 둡니다(`useStoredState`) — 창 크기에 맞춰
  *  둔 값이 다른 컴퓨터까지 따라오면 오히려 어긋납니다.
  *
@@ -21,7 +21,9 @@ export const UI_KEYS = [
   'nh.trade.drawings',
   'nh.trade.indicators',
   'nh.trade.split',
+  'nh.trade.splitLayout',
   'nh.alerts',
+  'nh.nav.strategy',
 ] as const
 
 export type UiKey = (typeof UI_KEYS)[number]

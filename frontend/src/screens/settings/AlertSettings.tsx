@@ -11,6 +11,7 @@ import {
   type AlertKind,
   type AlertSettings,
 } from '../../data/alerts'
+import { useStrategyTabShown } from '../../data/strategyTab'
 
 /* 설정 「일반」의 알림 묶음 — 전략 실행에서 일어난 일을 토스트·소리·운영체제 알림으로
  * 알릴지.
@@ -18,17 +19,20 @@ import {
  * 값은 화면 상태 파일(`nh.alerts`)에 남아 다른 창에서도 같습니다. 바꾸면 바로
  * 반영됩니다 — 저장 단추가 없습니다. */
 
-function Switch({
+export function Switch({
   label,
   on,
   onChange,
   locked = null,
+  busy = false,
 }: {
   label: string
   on: boolean
   onChange: (on: boolean) => void
   /** 켤 수 없는 까닭. 있으면 잠기고 `title` 로 그 까닭을 보입니다. */
   locked?: string | null
+  /** 바꿔도 되는지 확인하는 중인지. 그동안은 눌러도 바뀌지 않습니다. */
+  busy?: boolean
 }) {
   return (
     <button
@@ -37,9 +41,10 @@ function Switch({
       role="switch"
       aria-checked={on}
       aria-disabled={locked !== null}
+      aria-busy={busy || undefined}
       title={locked ?? undefined}
       onClick={() => {
-        if (locked === null) onChange(!on)
+        if (locked === null && !busy) onChange(!on)
       }}
     >
       <span className="alert-switch-track" aria-hidden="true">
@@ -52,6 +57,9 @@ function Switch({
 
 export function AlertSettingsGroup() {
   const [settings, store] = useAlertSettings()
+  /* 전략주문 탭이 꺼져 있으면 전략 알림은 나지 않습니다. 값은 그대로 두고 묶음을 흐리게
+     해, 다시 켜면 이 설정대로 알린다는 것을 보입니다. */
+  const strategyShown = useStrategyTabShown()
   const set = (patch: Partial<AlertSettings>) => store({ ...settings, ...patch })
   const setKind = (kind: AlertKind, part: 'toast' | 'sound' | 'os', on: boolean) =>
     set({ kinds: { ...settings.kinds, [kind]: { ...settings.kinds[kind], [part]: on } } })
@@ -78,8 +86,13 @@ export function AlertSettingsGroup() {
   const osOff = !settings.os || denied
 
   return (
-    <section className="settings-alerts" aria-label="알림">
+    <section className={`settings-alerts${strategyShown ? '' : ' is-strategy-off'}`} aria-label="알림">
       <h2 className="settings-name">알림</h2>
+      {!strategyShown && (
+        <p className="alert-off-note">
+          전략주문 탭이 꺼져 있어 전략 알림이 나지 않습니다. 켜면 아래 설정대로 다시 알립니다.
+        </p>
+      )}
       <p className="settings-note">
         {settings.os
           ? '전략 실행에서 일어난 일을 화면 오른쪽 아래에 알리고, 창이 가려져 있으면 운영체제 알림으로도 알립니다.'

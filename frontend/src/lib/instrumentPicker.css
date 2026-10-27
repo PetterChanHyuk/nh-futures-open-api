@@ -31,8 +31,47 @@
   box-shadow: 0 8px 24px rgb(var(--ink) / 0.16);
 }
 
+/* 찾는 칸. 상단 종목 검색 알약과 같은 바탕·둥근 끝이고, 글자는 판의 다른
+   글과 같은 급에 왼쪽부터 씁니다. 판이 세로로 쌓는 칸이라 **줄어들지 않게**
+   잡습니다 — 목록이 길면 이 칸이 먼저 눌려 납작해집니다. */
+.pick-search {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.pick-search-icon {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  transform: translateY(-50%);
+  /* 돋보기를 눌러도 칸에 초점이 가도록 누름은 칸으로 넘깁니다. */
+  pointer-events: none;
+}
+
 .pick-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
   height: 32px;
+  padding: 0 12px 0 36px;
+  border: none;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  font-size: 13px;
+  text-align: left;
+}
+
+.pick-input::placeholder {
+  color: var(--text-dim);
+}
+
+/* 품목 판은 목록이 칸 바로 아래에서 시작합니다. 칸에 초점이 서면 둘레에 테가
+   그려지므로, 그 테가 첫 머리글을 덮지 않을 만큼 띄웁니다. */
+.pick-search + .pick-rows {
+  margin-top: 8px;
 }
 
 .pick-title {

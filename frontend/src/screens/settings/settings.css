@@ -77,13 +77,46 @@
   color: var(--error);
 }
 
+/* ── 화면 ─────────────────────────────────────────────── */
+
+/* 「모의 / 실전」과 「알림」 사이의 묶음. 알림 묶음과 같은 선으로 가릅니다. */
+.settings-view {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+
+.view-control {
+  margin-top: 8px;
+}
+
+/* 낱말 가운데서 꺾지 않습니다 — 창 폭이 정해져 있어 설명이 두 줄로 넘어갈 때
+ * 「숨겨집 / 니다」처럼 끊기면 읽기가 멈춥니다. */
+.settings-view .settings-note,
+.settings-view .settings-confirm-error {
+  word-break: keep-all;
+}
+
 /* ── 알림 ─────────────────────────────────────────────── */
 
-/* 「모의 / 실전」 아래의 묶음. 위 줄과 선 하나로 가릅니다. */
+/* 「화면」 아래의 묶음. 위 묶음과 선 하나로 가릅니다. */
 .settings-alerts {
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid var(--divider);
+}
+
+/* 전략주문 탭이 꺼져 있으면 제목과 그 까닭 한 줄만 또렷하고, 나머지는 값을 지닌 채
+ * 흐립니다 — 지금은 이 설정대로 알리지 않지만, 켜면 그대로 다시 씁니다. */
+.settings-alerts.is-strategy-off > :not(.settings-name):not(.alert-off-note) {
+  opacity: 0.4;
+}
+
+.alert-off-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-label);
+  word-break: keep-all;
 }
 
 .alert-top {

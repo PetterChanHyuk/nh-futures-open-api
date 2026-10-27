@@ -32,7 +32,9 @@
     nh.trade.drawings      차트에 그린 것
     nh.trade.indicators    차트 지표 설정
     nh.trade.split         차트 분할
+    nh.trade.splitLayout   차트 두 칸일 때의 화면 배치
     nh.alerts              전략 실행 알림 설정
+    nh.nav.strategy        상단 전략주문 탭을 보일지
 
 브라우저에 남는 것 — 그 화면, 그 창에서만 뜻이 있는 것
 
@@ -74,7 +76,9 @@ STORED_KEYS = (
     "nh.trade.drawings",
     "nh.trade.indicators",
     "nh.trade.split",
+    "nh.trade.splitLayout",
     "nh.alerts",
+    "nh.nav.strategy",
 )
 
 #: 브라우저에 남기는 항목. 여기서 쓰지는 않고, 무엇을 안 옮겼는지 적어 둡니다.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { MarketContext, OpenIntent, ProductKind } from '../../lib/types'
 import { OrderConfirm } from './OrderConfirm'
 import { defaultInstrumentCode, resolve, type Instrument } from '../../data/instruments'
@@ -7,6 +7,8 @@ import { SPLIT_KEY, defaultSplit, normalizeSplit, type SlotState, type SplitStat
 import { domesticContextOf, subscribeSession } from '../../data/session'
 import { marketConfigured, useEnvironment } from '../../data/environment'
 import { useUiState } from '../../data/uiState'
+import { noteTradeNotice } from '../../data/alerts'
+import { useMasterStatus } from '../../lib/useMaster'
 import { PanelEditor } from './PanelEditor'
 import { CARD_LABEL } from './tradeLayout'
 import { useOptionChainPick } from './useOptionChainPick'
@@ -50,6 +52,11 @@ import './OrderForm.css'
  * 칸이 헤더·호가·주문의 종목이 됩니다.
  */
 
+/* 밖에서 연 것 가운데 이미 들인 차례(`openedSeq`). 이 화면은 탭을 옮길 때마다
+   새로 서므로, 화면 안에 두면 돌아올 때마다 지난번에 연 것을 또 들입니다. */
+let takenOpenSeq = 0
+let takenIntentSeq = 0
+
 interface Props {
   /** 검색과 카탈로그가 기본으로 훑을 범위. **이 화면의 종목은 여기서 안 나옵니다** —
    *  종목은 코드가 정하고, 시장도 코드에서 나옵니다. */
@@ -58,32 +65,64 @@ interface Props {
   openedCode: string | null
   /** 무엇을 하러 왔는가. 없으면 새 주문입니다. */
   openedIntent?: OpenIntent | null
+  /** 밖에서 연 횟수. 열 때마다 오르고, 같은 코드를 다시 열어도 오릅니다. */
+  openedSeq?: number
   /** 못 푸는 코드를 만났을 때. 화면 위 한 줄로 이유가 섭니다. */
   onOpenFailed: (code: string) => void
   /** 설정 창 열기. 그 시장의 인증 정보가 없을 때 헤더가 이 길을 냅니다. */
   onOpenSettings?: () => void
 }
 
-export function TradeScreen({ context, openedCode, openedIntent, onOpenFailed, onOpenSettings }: Props) {
-  /* 이 화면이 보고 있는 종목 — **코드 하나**입니다.
-     품목·만기·선물인지 옵션인지·어느 시장인지가 전부 여기서 풀려 나오므로,
-     화면이 그것들을 따로 기억하지 않습니다. 기억이 여럿이면 서로 어긋나고,
-     어긋나면 헤더가 말하는 종목과 주문 단추가 내는 종목이 갈립니다. */
-  const [selectedCode, setSelectedCode] = useState<string | null>(
-    /* 밖에서 고르고 들어오지 않았으면 이 시장의 기본 종목으로 엽니다. 코드를
-       비워 두면 화면은 기본 종목의 값을 보여주면서 만기 목록만 비어, 어느
-       만기를 보고 있는지가 헤더에서 사라집니다. */
-    openedCode ?? defaultInstrumentCode(context === 'overseas' ? 'overseas' : 'domestic'),
-  )
-
-  const [tab, setTab] = useState<Tab>('차트')
-
+export function TradeScreen({
+  context,
+  openedCode,
+  openedIntent,
+  openedSeq = 0,
+  onOpenFailed,
+  onOpenSettings,
+}: Props) {
   /* 2분할 상태 — 켜져 있는지, 어느 칸이 주문 대상인지, 칸마다 종목·봉·지표.
      남깁니다: 축소했다 다시 확대해도, 앱을 껐다 켜도 두 칸이 그대로 돌아옵니다.
      저장된 것은 예전 모양일 수 있어 읽을 때 정규화합니다. */
   const [storedSplit, storeSplit] = useUiState<unknown>(SPLIT_KEY, defaultSplit())
   const splitState = useMemo(() => normalizeSplit(storedSplit), [storedSplit])
-  const setSplitState = (next: SplitState) => storeSplit(next)
+
+  /* 이 화면이 보고 있는 종목 — **코드 하나**입니다.
+     품목·만기·선물인지 옵션인지·어느 시장인지가 전부 여기서 풀려 나오므로,
+     화면이 그것들을 따로 기억하지 않습니다. 기억이 여럿이면 서로 어긋나고,
+     어긋나면 헤더가 말하는 종목과 주문 단추가 내는 종목이 갈립니다. */
+  const [selectedCode, setSelectedCode] = useState<string | null>(() => {
+    /* 두 칸 보기면 마지막으로 첫째 칸에 두었던 종목으로 엽니다. 다른 탭에 갔다
+       오거나 앱을 다시 켜도 첫째 칸이 그대로입니다. 그 종목이 목록에 없으면
+       (만기) 아래 차례로 넘어갑니다. */
+    const first = splitState.split ? (splitState.slots[0].instrument?.code ?? null) : null
+    if (first && resolve(first)) return first
+    /* 밖에서 고르고 들어오지 않았으면 이 시장의 기본 종목으로 엽니다. 코드를
+       비워 두면 화면은 기본 종목의 값을 보여주면서 만기 목록만 비어, 어느
+       만기를 보고 있는지가 헤더에서 사라집니다. */
+    return openedCode ?? defaultInstrumentCode(context === 'overseas' ? 'overseas' : 'domestic')
+  })
+
+  const [tab, setTab] = useState<Tab>('차트')
+
+  /* 이 화면에서 사용자가 첫째 칸 종목을 바꿨는지. 바꾸기 전에는 남겨 둔 첫째 칸
+     종목이 우선입니다(아래 종목 목록 도착 효과). */
+  const firstChangedRef = useRef(false)
+  const changeFirst = (code: string) => {
+    firstChangedRef.current = true
+    setSelectedCode(code)
+  }
+
+  /* 두 칸 보기 상태를 남깁니다. **첫째 칸 종목도 함께 남깁니다** — 그래야 다시
+     들어왔을 때 첫째 칸이 그대로입니다. 남기는 때는 사용자가 첫째 칸을 바꿨을 때
+     (`first`)와 두 칸을 켤 때뿐입니다. 봉 종류·지표를 바꾸는 쓰기에서까지 화면의
+     첫째 칸으로 덮으면, 종목 목록을 받기 전이라 기본 종목이 서 있던 동안 남겨 둔
+     종목이 지워집니다. */
+  const setSplitState = (next: SplitState, first?: string) => {
+    const code = first ?? (next.split && !splitState.split ? selectedCode : null)
+    const ref = next.split && code && next.slots[0].instrument?.code !== code ? refFor(code) : null
+    storeSplit(ref ? { ...next, slots: [{ ...next.slots[0], instrument: ref }, next.slots[1]] } : next)
+  }
   const patchSlot = (slot: 0 | 1, patch: Partial<SlotState>) => {
     const slots: [SlotState, SlotState] = [{ ...splitState.slots[0] }, { ...splitState.slots[1] }]
     slots[slot] = { ...slots[slot], ...patch }
@@ -92,8 +131,16 @@ export function TradeScreen({ context, openedCode, openedIntent, onOpenFailed, o
   /* 코드를 종목으로 풉니다. 모르는 코드(상장이 끝난 종목)면 `null` 이고, 그때는
      이 시장의 기본 종목을 봅니다.
      **스프레드도 이 경로로 옵니다** — 검색·종목 화면이 스프레드를 이 화면으로
-     보냅니다. 값은 선물과 같은 자리에 서고, 주문만 아직 막혀 있습니다. */
-  const selected = useMemo(() => (selectedCode ? resolve(selectedCode) : null), [selectedCode])
+     보냅니다. 값은 선물과 같은 자리에 서고, 주문만 아직 막혀 있습니다.
+     종목 목록을 받는 중에는 어떤 코드도 풀리지 않습니다. 목록이 오면 다시 풉니다 —
+     그러지 않으면 받는 동안 풀지 못한 칸이 목록이 온 뒤에도 빈 칸으로 남습니다. */
+  const master = useMasterStatus()
+  const selected = useMemo(
+    () => (selectedCode ? resolve(selectedCode) : null),
+    // 목록이 도착하면 같은 코드라도 다시 풉니다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedCode, master.status],
+  )
   /* 그 종목의 시장에 인증 정보가 없는지. 그러면 그 종목의 시세·호가·체인·세션을
      **묻지 않습니다** — 빈 키로 물으면 토큰 발급부터 실패해 오류만 쌓입니다. 헤더가
      까닭을 한 번 말하고 주문 폼이 잠깁니다. 설정이나 접속 환경을 아직 모르면
@@ -126,7 +173,12 @@ export function TradeScreen({ context, openedCode, openedIntent, onOpenFailed, o
      신원에서 시세를 얻습니다. 칸마다 다른 길로 만들면 한쪽만 고쳐지는 자리가
      생깁니다. */
   const secondCode = splitState.slots[1].instrument?.code ?? null
-  const secondSelected = useMemo(() => (secondCode ? resolve(secondCode) : null), [secondCode])
+  const secondSelected = useMemo(
+    () => (secondCode ? resolve(secondCode) : null),
+    // 목록이 도착하면 같은 코드라도 다시 풉니다(첫째 칸과 같은 까닭).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [secondCode, master.status],
+  )
 
   /* 헤더·호가·주문 폼이 보는 종목 = **주문 대상인 칸**의 종목. 2분할에서 둘째
      칸이 대상이면 그 종목이고, 그 밖에는 화면의 종목입니다.
@@ -136,6 +188,25 @@ export function TradeScreen({ context, openedCode, openedIntent, onOpenFailed, o
      대상인 옵션일 때 헤더의 두 셀렉트만 첫째 칸을 가리킵니다. */
   const secondIsSubject = splitState.split && splitState.active === 1 && secondSelected !== null
   const subject = secondIsSubject ? secondSelected : selected
+
+  /* 주문 대상이던 둘째 칸의 종목이 목록에서 사라졌으면(만기) 대상을 첫째로 옮기고
+     한 줄로 알립니다. 둘째 칸은 「종목을 고르세요」 빈 칸으로 남습니다. 대상이
+     사용자 손 없이 바뀌는 자리라 말없이 옮기지 않습니다. 목록을 아직 받는 중이면
+     없는 것인지 모르는 것인지 가를 수 없어 기다립니다. */
+  const secondMissing =
+    master.status === 'ready' && splitState.split && splitState.active === 1 && secondSelected === null
+  useEffect(() => {
+    if (!secondMissing) return
+    setSplitState({ ...splitState, active: 0 })
+    noteTradeNotice({
+      label: '주문 대상 바뀜',
+      text: '둘째 칸의 종목이 종목 목록에 없어 주문 대상을 첫째 칸으로 옮겼습니다',
+      urgent: false,
+      mergeKey: 'trade|split-target',
+    })
+    // 사라진 순간 한 번만 옮깁니다. 저장 함수는 매번 새로 만들어집니다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [secondMissing])
   /* 주문 대상 종목의 시장. 다른 시장의 종목을 차트 칸에 올려 주문 대상으로 삼으면
      헤더의 장 표시·주문유형·만기 목록·포지션 목록이 그 시장을 따라야 합니다 —
      화면의 시장 범위는 「어디서 시작했는가」이고, 주문은 「지금 무엇을 보는가」입니다. */
@@ -271,10 +342,12 @@ export function TradeScreen({ context, openedCode, openedIntent, onOpenFailed, o
     chartTabsInBody,
     cardHead,
     collapsedFor,
-    bottomHeadActions,
+    cardShown,
+    bottomHead,
     colSplits,
     rowSplits,
     gridStyle,
+    splitView,
   } = useTradeGrid({
     splitState,
     kind,
@@ -307,7 +380,8 @@ export function TradeScreen({ context, openedCode, openedIntent, onOpenFailed, o
          것보다 엉뚱한 칸이 비는 것이 나쁩니다. */
       if (ref) patchSlot(1, { instrument: ref })
     } else {
-      setSelectedCode(next)
+      changeFirst(next)
+      if (splitState.split) setSplitState(splitState, next)
     }
     /* 고른 축은 **주문 대상 종목**에 딸린 것이라 그 종목이 바뀌면 새 코드에서
        다시 읽습니다. 옵션 코드면 콜/풋과 행사가가 그 안에 있고, 선물이나 아직
@@ -317,15 +391,59 @@ export function TradeScreen({ context, openedCode, openedIntent, onOpenFailed, o
     else if (tab === '체인') setTab('차트')
   }
 
-  /* 차트 배지에서 종목을 골랐을 때. 둘째 칸은 제 종목만 바꿉니다 — 다만 그
-     칸이 주문 대상이면 옵션의 축도 그 종목의 것으로 다시 읽습니다. */
+  /* 차트 배지에서 종목을 골랐을 때. **배지는 제 칸만 바꿉니다** — 주문 대상은
+     옮기지 않습니다. 둘째 칸이 대상인데 첫째 칸 배지로 고른 종목이 둘째 칸에
+     들어가면, 고른 칸과 바뀐 칸이 달라 무엇을 바꿨는지 알 수 없습니다. 고른 칸이
+     주문 대상이면 옵션의 축도 그 종목의 것으로 다시 읽습니다. */
   const pickInstrument = (slot: 0 | 1, item: InstrumentRef) => {
     if (slot === 1) {
       patchSlot(1, { instrument: item })
       if (secondIsSubject) pickFromCode(resolve(item.code))
       return
     }
+    if (secondIsSubject) {
+      /* 대상이 아닌 첫째 칸만 바꿉니다. 헤더·호가·주문 폼은 둘째 칸 그대로입니다. */
+      if (!resolve(item.code)) {
+        onOpenFailed(item.code)
+        return
+      }
+      changeFirst(item.code)
+      setSplitState(splitState, item.code)
+      return
+    }
     openCode(item.code)
+  }
+
+  /* 밖에서 연 종목(최근 본·검색·홈·종목 화면·계좌의 청산·정정)을 들이는 길.
+     한 칸이면 화면 안에서 고를 때와 같은 길(`openCode`)입니다.
+
+     **두 칸이면 첫째 칸으로 들어가고 주문 대상은 첫째로 돌아옵니다.** 둘째 칸은
+     사용자가 따로 골라 둔 것이라 그대로 둡니다. 이미 어느 칸에 떠 있는 종목이면
+     칸은 건드리지 않고 그 칸을 주문 대상으로 삼습니다 — 같은 종목이 두 칸에
+     서면 칸 하나가 쓸모없어집니다.
+
+     두 칸에서 옵션을 열어도 탭은 그대로입니다. 차트로 두 칸을 보는 중이라,
+     체인으로 넘기면 고른 종목이 어느 칸에 들어갔는지 안 보입니다. */
+  const openFromOutside = (next: string) => {
+    if (!splitState.split) {
+      openCode(next)
+      return
+    }
+    const item = resolve(next)
+    if (!item) {
+      onOpenFailed(next)
+      return
+    }
+    /* 이미 주문 대상 칸에 떠 있으면 할 일이 없습니다. */
+    if ((secondIsSubject ? secondCode : selectedCode) === next) return
+    if (secondSelected !== null && secondCode === next) {
+      setSplitState({ ...splitState, active: 1 })
+    } else {
+      changeFirst(next)
+      setSplitState({ ...splitState, active: 0 }, next)
+    }
+    pickFromCode(item)
+    if (item.kind !== 'option' && tab === '체인') setTab('차트')
   }
 
   const {
@@ -377,25 +495,91 @@ export function TradeScreen({ context, openedCode, openedIntent, onOpenFailed, o
     openCode,
   })
 
-  /* 밖에서 종목을 고르고 들어온 경우(검색·최근 본·종목 화면).
+  /* 밖에서 종목을 고르고 들어온 경우(검색·최근 본·홈·종목 화면). 어떻게
+     들이는지는 `openFromOutside` 가 정합니다.
 
-     **들어오는 코드는 늘 주문 대상 칸으로 갑니다.** 어디서 골랐든 결과가 같아야
-     하므로 화면 안에서 고를 때와 같은 길(`openCode`)을 지납니다 — 밖에서 온
-     것만 첫째 칸에 넣으면, 2분할에서 둘째 칸이 주문 대상일 때 고른 종목이
-     보지도 않는 칸에 들어가고 주문 폼은 옛 종목 그대로입니다. */
+     한 칸이면 화면이 새로 설 때와 들어온 코드가 바뀌었을 때 엽니다. 이미 연
+     종목을 다시 열면 아무 일도 없습니다.
+
+     두 칸이면 **새로 연 것만** 들입니다. 다른 탭에 갔다 돌아와 화면이 새로 설
+     때 지난번에 연 종목을 또 들이면, 그 사이에 바꿔 둔 칸과 주문 대상이 덮입니다.
+     대신 같은 종목을 다시 열어도 새로 연 것이라 그 종목이 있는 칸이 주문 대상이
+     됩니다. */
+  /* 남겨 둔 첫째 칸 종목은 종목 목록이 있어야 풀립니다. 목록을 받는 중에 이
+     화면이 섰으면 첫째 칸은 일단 다른 종목으로 서므로, 목록이 오면 남겨 둔
+     종목으로 돌립니다. 그사이 사용자가 첫째 칸을 바꿨으면 그대로 둡니다.
+     돌리기만 하고 남기지는 않습니다 — 남겨 둔 값으로 돌아가는 것입니다. */
+  const savedFirst = splitState.split ? (splitState.slots[0].instrument?.code ?? null) : null
   useEffect(() => {
-    if (!openedCode) return
+    if (master.status !== 'ready' || firstChangedRef.current) return
+    if (!savedFirst || savedFirst === selectedCode) return
+    const item = resolve(savedFirst)
+    if (!item) return
+    setSelectedCode(savedFirst)
+    if (!secondIsSubject) pickFromCode(item)
+    // 목록이 오거나 남겨 둔 종목이 바뀔 때만 봅니다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [master.status, savedFirst])
+
+  /* 종목 목록을 받는 중에 이 화면이 서면 기본 종목도 아직 정할 수 없어, 첫째 칸이
+     종목 없이 섭니다. 목록이 오면 그때 이 시장의 기본 종목을 정합니다. 밖에서
+     고르고 들어온 종목, 남겨 둔 첫째 칸 종목, 그사이 사용자가 고른 종목이 있으면
+     그쪽이 먼저라 건드리지 않습니다. 남기지는 않습니다 — 처음부터 기본 종목으로
+     열렸을 때와 같은 상태로 돌아가는 것입니다. */
+  useEffect(() => {
+    if (master.status !== 'ready' || firstChangedRef.current || selectedCode) return
+    if (savedFirst && resolve(savedFirst)) return
+    const code = defaultInstrumentCode(context === 'overseas' ? 'overseas' : 'domestic')
+    if (code && resolve(code)) setSelectedCode(code)
+    // 목록이 올 때만 봅니다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [master.status])
+
+  const lastOpenedRef = useRef<string | null>(null)
+  const ranSeqRef = useRef<number | null>(null)
+  useEffect(() => {
+    /* 같은 화면에서 같은 차례를 두 번 들이지 않습니다. */
+    if (ranSeqRef.current === openedSeq) return
+    ranSeqRef.current = openedSeq
+    const fresh = openedSeq !== takenOpenSeq
+    takenOpenSeq = openedSeq
+    if (splitState.split) {
+      lastOpenedRef.current = openedCode
+      if (fresh) {
+        if (openedCode) openFromOutside(openedCode)
+      } else {
+        /* 새로 연 것이 없으면 주문 대상의 옵션 축(콜/풋·행사가)만 그 종목에서
+           다시 읽습니다. 화면이 새로 서면 축이 비어 있습니다. */
+        pickFromCode(subject)
+      }
+      return
+    }
+    if (!openedCode || lastOpenedRef.current === openedCode) return
+    lastOpenedRef.current = openedCode
     openCode(openedCode)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openedCode])
+  }, [openedSeq])
 
   /* 무엇을 하러 왔는지를 폼에 옮깁니다. 종목이 바뀌면 폼을 비우는 효과가
      먼저 도는데, 그 뒤에 이것이 다시 채웁니다 — 순서가 뒤집히면 채운 값이
      곧바로 지워집니다. */
+  const intentSeqRef = useRef<number | null>(null)
   useEffect(() => {
+    /* 두 칸이면 종목과 같이 **새로 연 것만** 옮깁니다. 돌아올 때마다 다시 채우면
+       지난번 청산 폼이 다시 서고 주문 대상도 그 종목으로 돌아갑니다.
+       이 화면이 이미 들인 차례는 다시 돌아도 들입니다 — 개발 모드는 화면을 세울
+       때 효과를 두 번 돌리고, 그때 폼을 비우는 효과도 다시 돌아 채운 값을
+       지웁니다. */
+    const fresh = openedSeq !== takenIntentSeq || intentSeqRef.current === openedSeq
+    takenIntentSeq = openedSeq
+    if (fresh) intentSeqRef.current = openedSeq
     if (!openedIntent) return
+    if (splitState.split && !fresh) return
     if (openedIntent.kind === 'close') {
-      startClosing(openedIntent.position)
+      /* 두 칸을 확대해 보는 중이면 확대를 풉니다. 확대에서는 잔고·주문 내역
+         카드가 숨어, 청산하러 온 포지션과 낸 주문이 어떻게 되는지 안 보입니다. */
+      if (splitState.split && chartExpanded) setChartExpanded(false)
+      startClosing(openedIntent.position, openFromOutside)
       return
     }
     const order = openedIntent.order
@@ -415,7 +599,7 @@ export function TradeScreen({ context, openedCode, openedIntent, onOpenFailed, o
        것이 아니라 그 주문에 없는 값입니다. */
     if (order.quantity === null) return
     keepModeForRef.current = order.code
-    openCode(order.code)
+    openFromOutside(order.code)
     startEditing(
       {
         id: order.id,
@@ -558,6 +742,7 @@ export function TradeScreen({ context, openedCode, openedIntent, onOpenFailed, o
           shownQuote,
           activeContext,
           priceKnown,
+          splitView,
         })}
 
         {/* 체인을 보는 동안에는 하단이 머리 띠만 남고 접힙니다.
@@ -568,9 +753,9 @@ export function TradeScreen({ context, openedCode, openedIntent, onOpenFailed, o
         {renderBottomCards({
           expandedChart,
           collapsedFor,
+          cardShown,
           cardProps,
-          cardHead,
-          bottomHeadActions,
+          bottomHead,
           startClosing,
           shownQuote,
           context,

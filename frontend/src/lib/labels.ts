@@ -18,6 +18,15 @@ export const RECENT_EMPTY = '아직 연 종목이 없습니다'
  *  조작이 안 먹은 것으로 읽습니다. */
 export const NO_CODE_REASON = '종목을 못 찾았습니다'
 
+/** 그 시장의 인증 정보가 없을 때. 계좌 화면과 사이드바의 계좌 패널이 같은 말로
+ *  무엇이 없는지와 어디서 넣는지를 답합니다. */
+export const NO_CREDENTIALS = '인증 정보가 없습니다'
+export const NO_CREDENTIALS_HINT = '설정에서 인증 정보를 입력하세요'
+
+/** 보유 포지션이 없을 때. 주문 화면의 미결제약정과 사이드바의 계좌 패널이 같은
+ *  목록을 같은 말로 비웁니다. */
+export const POSITIONS_EMPTY = '보유 포지션이 없습니다'
+
 /** 잔고 줄의 시장 배지. 계좌 화면 잔고 표와 주문 화면 미결제약정 표가 한 줄의
  *  시장을 같은 말로 답니다 — 국내는 그 줄 종목의 세션(주간·야간)입니다. */
 export const MARKET_BADGE: Record<MarketContext, string> = {

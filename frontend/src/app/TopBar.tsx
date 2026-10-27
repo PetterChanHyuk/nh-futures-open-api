@@ -97,6 +97,8 @@ interface Props {
   /** 최근 본 종목. 검색 창이 입력 전에 세웁니다. */
   recent: RecentItem[]
   onPageChange: (page: Page) => void
+  /** 전략주문 탭을 보일지(설정 「화면」). 끄면 그 탭만 빠지고 나머지 탭은 제자리입니다. */
+  strategyShown: boolean
   settingsOpen: boolean
   onOpenSettings: () => void
   onOpenInstrument: (code: string) => void
@@ -117,6 +119,7 @@ export function TopBar({
   quoteStalled,
   master,
   recent,
+  strategyShown,
   settingsOpen,
   onPageChange,
   onOpenSettings,
@@ -277,7 +280,7 @@ export function TopBar({
       {/* 탭을 아래 단으로 내립니다. 1단이 검색과 상태를 함께 이고 있어, 탭까지
           한 줄에 두면 화면을 옮기는 자리와 지금 상태를 읽는 자리가 섞입니다. */}
       <nav className="topbar-tabs" aria-label="화면">
-        {PAGES.map((item) => (
+        {PAGES.filter((item) => strategyShown || item.id !== 'strategy').map((item) => (
           <button
             key={item.id}
             type="button"

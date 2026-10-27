@@ -29,7 +29,8 @@ import { LeaveGuard } from './screens/strategy/LeaveGuard'
 import { hasUnsaved, openRunTab, revertDrafts } from './data/strategyStore'
 import { Toasts } from './app/Toasts'
 import { ScreenBoundary } from './app/ScreenBoundary'
-import { notifyTargets } from './data/alerts'
+import { dismissRunToasts, notifyTargets } from './data/alerts'
+import { setStrategyTabShown, strategyTabShown, useStrategyTabShown } from './data/strategyTab'
 import './app/shell.css'
 import './app/SearchBox.css'
 
@@ -110,6 +111,8 @@ function App() {
   const [leavingPage, setLeavingPage] = useState<Page | null>(null)
   const pageRef = useRef(page)
   pageRef.current = page
+  /* 상단 전략주문 탭을 보일지(설정 「화면」). 꺼도 전략 엔진과 실행은 그대로입니다. */
+  const strategyShown = useStrategyTabShown()
   /* 계좌의 어느 탭을 보고 있는지. 계좌 안이 아니라 여기에 두는 이유는,
      홈의 「더 보기」처럼 특정 탭을 보러 들어오는 길이 있어서입니다. */
   const [accountTab, setAccountTab] = useState('잔고')
@@ -146,6 +149,10 @@ function App() {
      어느 만기인지가 전부 코드에서 나오므로 여기서 따로 들고 있지 않습니다. */
   const [openedCode, setOpenedCode] = useState<string | null>(null)
   const [openedIntent, setOpenedIntent] = useState<OpenIntent | null>(null)
+  /* 밖에서 종목을 연 횟수. 열 때마다 오릅니다 — 같은 코드를 다시 열어도
+     오르므로, 일반주문이 「방금 새로 열었다」와 「다른 탭에 갔다가 돌아왔다」를
+     가를 수 있습니다. */
+  const [openedSeq, setOpenedSeq] = useState(0)
 
   /* 종목 마스터를 앱을 켤 때 한 번 받습니다. 화면에 서는 품목과 종목이 전부
      여기서 나오므로, 받기 전에는 목록이 비어 있고 그 사실을 화면이 말합니다. */
@@ -248,6 +255,7 @@ function App() {
       /* 무엇을 하러 왔는지도 함께 넘깁니다. 종목만 바꾸면 청산하러 온 사람이
          새 주문 폼을 받고, 방향과 수량을 다시 채워야 합니다. */
       setOpenedIntent(intent ?? null)
+      setOpenedSeq((seq) => seq + 1)
       goPage('trade')
     },
     [saveRecent, reportOpenFailure],
@@ -281,6 +289,10 @@ function App() {
      것도 여기를 지납니다. 전략주문에서 나갈 때만, 그리고 저장 안 한 초안이
      있을 때만 붙잡습니다. */
   function goPage(next: Page) {
+    /* 전략주문 탭을 꺼 두었으면 그 화면으로는 가지 않습니다. 탭 말고도 들어오는 길
+       (토스트의 「보기」, 운영체제 알림)이 모두 여기를 지납니다. 저장된 값을 그때그때
+       읽습니다 — 아래 알림 함수는 처음 만든 것을 계속 씁니다. */
+    if (next === 'strategy' && !strategyTabShown()) return
     /* 지금 페이지를 **ref 로** 봅니다 — 검색에서 종목을 여는 길은 기억해 둔
        함수(`useCallback`)를 지나므로, 그 함수가 만들어질 때의 페이지를 그대로
        들고 있으면 전략주문에서 나가는 것을 못 알아챕니다. */
@@ -292,11 +304,43 @@ function App() {
     setPage(next)
   }
 
+  /* 저장 안 한 설정 확인 창의 답을 기다리는 탭 끄기. 「버리고 이동」이면 `true`,
+     「여기 남기」면 `false` 로 풉니다. */
+  const hideAnswerRef = useRef<((left: boolean) => void) | null>(null)
+  const answerHide = (left: boolean) => {
+    const answer = hideAnswerRef.current
+    hideAnswerRef.current = null
+    answer?.(left)
+  }
+
+  /* 전략주문 탭을 끕니다. 그 화면을 보고 있으면 홈으로 옮긴 **뒤에** 끕니다 — 옮기는
+     길은 탭을 눌러 나갈 때와 같아서, 저장하지 않은 설정이 있으면 같은 확인 창이 뜨고
+     남기를 고르면 끄지 않습니다. 끄면서 떠 있던 실행 토스트도 걷습니다. */
+  function hideStrategyTab(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const commit = () => {
+        setStrategyTabShown(false)
+        dismissRunToasts()
+        resolve(true)
+      }
+      if (pageRef.current === 'strategy' && hasUnsaved()) {
+        hideAnswerRef.current = (left) => (left ? commit() : resolve(false))
+        setLeavingPage('home')
+        return
+      }
+      if (pageRef.current === 'strategy') goPage('home')
+      commit()
+    })
+  }
+
   /* 운영체제 알림을 눌렀을 때 — 데스크톱 앱이 창을 앞으로 가져온 뒤 이 함수를 부릅니다
-     (브라우저 알림은 알림이 직접 부릅니다). 토스트의 「보기」와 같은 곳으로 갑니다. */
+     (브라우저 알림은 알림이 직접 부릅니다). 토스트의 「보기」와 같은 곳으로 갑니다.
+     전략주문 탭이 꺼져 있으면 아무 데도 가지 않고, 전략 화면의 탭 상태도 바꾸지
+     않습니다. */
   useEffect(() => {
     const host = window as unknown as { __nhNotifyClick?: (runId: string) => void }
     host.__nhNotifyClick = (runId) => {
+      if (!strategyTabShown()) return
       const ids = notifyTargets(runId || null)
       if (ids.length > 0 && openRunTab(ids)) goPage('strategy')
     }
@@ -324,6 +368,10 @@ function App() {
         master={master}
         recent={recent}
         onPageChange={goPage}
+        /* 파일 값이 오기 전에는 켬으로 그립니다. 기본이 켬이라, 그동안 숨겼다가 세우면
+           대부분의 사람에게 뒤의 「계좌」 탭이 켤 때마다 한 칸 밀립니다. 꺼 둔 사람에게는
+           값이 올 때까지 탭이 잠깐 보입니다. */
+        strategyShown={strategyShown}
         settingsOpen={settingsOpen}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenInstrument={openInstrument}
@@ -410,6 +458,7 @@ function App() {
                 context={context}
                 openedCode={openedCode}
                 openedIntent={openedIntent}
+                openedSeq={openedSeq}
                 onOpenFailed={reportOpenFailure}
                 onOpenSettings={() => setSettingsOpen(true)}
               />
@@ -424,20 +473,36 @@ function App() {
           current={page === 'trade' ? openedCode : null}
           onOpen={(item) => openInstrument(item.code)}
           onRemove={removeRecent}
+          onOpenInstrument={openInstrument}
         />
       </main>
 
-      {/* 전략 실행 알림. 「보기」는 전략주문으로 옮겨 그 실행을 엽니다. */}
+      {/* 전략 실행 알림. 「보기」는 전략주문으로 옮겨 그 실행을 엽니다. 전략주문 탭이
+          꺼져 있으면 전략 화면의 탭 상태도 바꾸지 않습니다. */}
       <Toasts
         page={page}
         onView={(runIds) => {
+          if (!strategyTabShown()) return
           if (openRunTab(runIds)) goPage('strategy')
         }}
       />
 
+      {settingsOpen && (
+        <SettingsModal
+          needsCredentials={needsCredentials}
+          onHideStrategy={hideStrategyTab}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {/* 설정 창보다 뒤에 둡니다 — 설정에서 전략주문 탭을 끌 때 이 창이 설정 창 위에
+          떠야 답할 수 있습니다. */}
       {leavingPage && (
         <LeaveGuard
-          onStay={() => setLeavingPage(null)}
+          onStay={() => {
+            setLeavingPage(null)
+            answerHide(false)
+          }}
           onLeave={() => {
             /* 되돌리는 것은 설정 초안뿐입니다 — 검증·진행의 실행과 보낸
                요청은 그대로 둡니다. 하위 탭에서 떠날 때와 같은 자리입니다. */
@@ -445,14 +510,8 @@ function App() {
             if (leavingPage === 'home') setHomeVisit((count) => count + 1)
             setPage(leavingPage)
             setLeavingPage(null)
+            answerHide(true)
           }}
-        />
-      )}
-
-      {settingsOpen && (
-        <SettingsModal
-          needsCredentials={needsCredentials}
-          onClose={() => setSettingsOpen(false)}
         />
       )}
     </div>

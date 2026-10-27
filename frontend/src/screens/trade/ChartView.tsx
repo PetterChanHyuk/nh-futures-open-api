@@ -18,15 +18,27 @@ import { DRAW_GROUP, type TradeMark } from './chartMarks'
 import { useTimetable } from '../../data/session'
 import { InstrumentPicker, type InstrumentRef } from '../../lib/InstrumentPicker'
 import { SPAN_LABEL, type Span } from './chartSlots'
-import { ChartLegend, collectLegend, type LegendFold, type LegendRow, type OhlcRow } from './ChartLegend'
+import {
+  ChartLegend,
+  collectLegend,
+  legendHeadBottom,
+  type LegendFold,
+  type LegendRow,
+  type OhlcRow,
+} from './ChartLegend'
 import {
   CANDLE_PANE,
   DEFAULT_TOP_GAP,
   BOTTOM_GAP,
   headroomGap,
+  headroomFits,
+  HIGH_MARK_TEXT_SIZE,
+  candlePaneHeight,
   X_AXIS_HEIGHT,
   PANE_FLOOR,
   CANDLE_MIN,
+  CANDLE_MIN_COMPACT,
+  SPLIT_PANE_FLOOR,
   type BottomCap,
   capBottom,
   fitPanes,
@@ -104,6 +116,9 @@ interface Props {
   onBottomOverflow?: (names: string[]) => void
   /** 겹친 지표 범례 접기. 전략 검증 차트가 넘깁니다 — 없으면 늘 펼침입니다. */
   legendFold?: LegendFold
+  /** 이 칸이 받을 수 있는 높이(px). 일반주문 차트가 넘깁니다. 표준 칸 바닥보다 낮거나
+   *  펼친 범례가 봉 칸에 안 들어가면 머리 범례를 한 줄로 접습니다 — 없으면 늘 그대로입니다. */
+  paneRoom?: number | null
 }
 
 export function ChartView({
@@ -128,6 +143,7 @@ export function ChartView({
   bottomCap,
   legendFold,
   onBottomOverflow,
+  paneRoom = null,
 }: Props) {
   const boxRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<Chart | null>(null)
@@ -147,6 +163,37 @@ export function ChartView({
     [givenSettings, bottomCap, boxHeight],
   )
   const settings = capped.settings
+  /* 칸이 이보다 낮아지면 카드가 세로로 스크롤합니다. 봉 칸의 바닥 + 아래 칸
+     바닥들 + 시간 축입니다. */
+  const subCount = allIndicatorDefs().filter((def) => def.group === 'bottom' && settings[def.name]?.on).length
+  const subFloor = subCount * (PANE_FLOOR + 1) + X_AXIS_HEIGHT
+  /* 머리 범례를 한 줄로 접는지. 둘 중 하나면 접습니다.
+
+     1. 받을 높이가 표준 칸 바닥(`SPLIT_PANE_FLOOR`)보다 낮을 때 — 이 칸에 켠 지표와
+        상관없이 정해, 위아래 두 칸이 늘 같은 모양입니다. 접으면 봉 칸 바닥도 함께
+        내려 낮은 창에서 두 칸이 스크롤 없이 섭니다.
+     2. 칸은 넉넉해도 펼친 범례가 봉 칸에 안 들어갈 때 — 겹친 지표가 여럿이면 범례가
+        세 줄, 네 줄이 되어 머리 여백 맞춤(`headroomGap`)이 포기하는 높이를 넘고, 그러면
+        범례가 최근 봉을 덮습니다. 차트를 그리기 전에 같은 문턱으로 미리 셉니다. */
+  const overlayCount = allIndicatorDefs().filter((def) => def.group === 'top' && settings[def.name]?.on).length
+  const legendTooTall =
+    paneRoom !== null &&
+    !headroomFits(
+      legendHeadBottom(overlayCount),
+      HIGH_MARK_TEXT_SIZE,
+      candlePaneHeight(Math.max(paneRoom, CANDLE_MIN + subFloor), subCount, expanded),
+    )
+  const compact = paneRoom !== null && (paneRoom < SPLIT_PANE_FLOOR || legendTooTall)
+  const minHeight = (compact ? CANDLE_MIN_COMPACT : CANDLE_MIN) + subFloor
+  /* 접힌 범례를 펼쳐 덮어 보는지. 저장하지 않고, 접을 일이 없어지면 닫습니다. */
+  const [legendPop, setLegendPop] = useState(false)
+  useEffect(() => {
+    if (!compact) setLegendPop(false)
+  }, [compact])
+  const compactFold = useMemo(
+    () => (compact ? { open: legendPop, onToggle: setLegendPop } : undefined),
+    [compact, legendPop],
+  )
   const overflowKey = capped.overflow.join(',')
   useEffect(() => {
     onBottomOverflow?.(overflowKey === '' ? [] : overflowKey.split(','))
@@ -563,8 +610,9 @@ export function ChartView({
     headroomRef.current = { chart, gap }
     chart.overrideYAxis({ paneId: CANDLE_PANE, gap: { top: gap ?? DEFAULT_TOP_GAP, bottom: BOTTOM_GAP } })
     bump()
-    // 범례를 접고 펴면 머리 높이가 바뀌어 여백을 다시 셉니다.
-  }, [legend, bump, legendFold?.open])
+    // 범례를 접고 펴면 머리 높이가 바뀌어 여백을 다시 셉니다. 낮은 칸의 한 줄 접기도
+    // 같습니다 — 덮어 펼친 범례는 머리로 세지 않아(`.legend-pop`) 여기에 안 넣습니다.
+  }, [legend, bump, legendFold?.open, compact])
 
   useChartOverlays({
     chartRef,
@@ -624,10 +672,6 @@ export function ChartView({
      남은 축의 낱말도 같은 한 벌에서 가져옵니다. */
   const pendingLeg = needsLeg(quote.code)
   const pendingWord = PENDING_TEXT[quote.pendingAxis ?? 'strike'].pick
-  /* 칸이 이보다 낮아지면 카드가 세로로 스크롤합니다. 봉 칸의 바닥 + 아래 칸
-     바닥들 + 시간 축입니다. */
-  const subCount = allIndicatorDefs().filter((def) => def.group === 'bottom' && settings[def.name]?.on).length
-  const minHeight = CANDLE_MIN + subCount * (PANE_FLOOR + 1) + X_AXIS_HEIGHT
   /* 분수로 부르는 품목이면 배지도 분수로 적습니다 — 헤더·호가와 같은 말을
      써야 같은 값으로 읽힙니다. */
   const money = (value: number) =>
@@ -644,10 +688,8 @@ export function ChartView({
     <b>{quote.name}</b>
     {/* 콜/풋과 행사가가 다 정해지기 전에는 종목이 아직 없습니다.
 
-        그동안 차트가 그리는 것은 **기초 선물**이라, 값과 등락을 옵션 품목
-        이름 옆에 세우면 그 이름의 시세로 읽힙니다. 그래서 대기 중에는 값을
-        빼고 무엇이 남았는지만 적습니다 — 기초 선물의 현재가는 바로 위
-        헤더가 이미 큼직하게 보이고 있습니다.
+        그동안은 그릴 봉도 값도 없어, 값 자리에 무엇이 남았는지만 적습니다.
+        칸에는 차트 대신 같은 말의 안내 한 줄이 섭니다(아래 `is-pending`).
 
         낱말은 헤더·카탈로그·최근 본과 같은 한 벌에서 옵니다. */}
     {/* 값을 못 받았으면 여기서도 값을 말하지 않습니다 — 헤더가 「받지
@@ -676,13 +718,21 @@ export function ChartView({
 
   return (
     <div
-      className={`chart-box${split ? (active ? ' is-target' : ' is-idle') : ''}`}
+      className={`chart-box${split ? (active ? ' is-target' : ' is-idle') : ''}${pendingLeg ? ' is-pending' : ''}`}
       style={{ minHeight }}
       /* 칸을 누르면 주문 대상이 됩니다. 도형·범례 단추를 눌러도 같이 됩니다 —
          만지고 있는 차트가 곧 보고 있는 차트입니다. */
       onMouseDown={split && !active ? onActivate : undefined}
     >
       <div className="chart-canvas" ref={boxRef} />
+
+      {/* 옵션인데 행사가(또는 콜/풋)를 아직 안 고른 칸. 아직 종목이 아니라 조회를
+          내지 않으므로(`data/quotes.ts` 의 `askable`) 그릴 봉이 없습니다. 빈 격자를
+          세우는 대신 「종목을 고르세요」 칸과 같은 꼴로 배지와 안내 한 줄만 둡니다.
+          이 칸은 주문 대상이 될 수 있고, 대상이 되면 헤더에서 남은 축을 고릅니다. */}
+      {pendingLeg && (
+        <p className="chart-pending-note">{PENDING_TEXT[quote.pendingAxis ?? 'strike'].ask}</p>
+      )}
 
       {/* 종목 배지. 두 칸일 때 어느 칸이 어느 종목인지는 이 배지가 말하고,
           ▾ 로 이 칸의 종목만 바꿉니다. 종목을 바꿀 수 없는 차트(전략 검증의
@@ -736,17 +786,20 @@ export function ChartView({
         shortDays && <span className="chart-quiet">앞쪽 어느 날은 덜 받았을 수 있습니다</span>
       )}
 
-      <ChartLegend
-        bars={legend.bars}
-        quote={quote}
-        ohlc={legend.ohlc}
-        rows={legend.rows}
-        onHide={hide}
-        onRemove={(name) => onSettingChange(name, { ...settings[name], on: false })}
-        fold={legendFold}
-      />
+      {!pendingLeg && (
+        <ChartLegend
+          bars={legend.bars}
+          quote={quote}
+          ohlc={legend.ohlc}
+          rows={legend.rows}
+          onHide={hide}
+          onRemove={(name) => onSettingChange(name, { ...settings[name], on: false })}
+          fold={legendFold}
+          compact={compactFold}
+        />
+      )}
 
-      {marks.map((mark) => (
+      {!pendingLeg && marks.map((mark) => (
         <span
           key={mark.name}
           className="chart-mark"

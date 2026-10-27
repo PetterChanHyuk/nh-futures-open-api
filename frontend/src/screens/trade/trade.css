@@ -112,6 +112,12 @@
   min-width: 0;
 }
 
+/* 차트 두 칸 배치에서 주문 내역에 높이를 내준 호가. 사다리(다섯 단계씩)는 줄이지
+ * 않고 카드 안에서 굴립니다 — 뭉갠 사다리는 단계가 잘린 채로 값처럼 보입니다. */
+.card-book[data-squeezed] > .order-book {
+  min-height: 0;
+}
+
 /* 차트 카드의 본문. 위 여백은 10 입니다 — 첫 줄이 32px 도구 줄이라 구분선에
  * 바로 붙으면 단추가 선에 걸립니다.
  *
@@ -228,7 +234,10 @@
   overflow-x: hidden;
 }
 
-/* 차트 칸이 서는 자리. 한 칸이면 다 차지하고, 2분할이면 좌우 반반입니다. */
+/* 차트 칸이 서는 자리. 한 칸이면 다 차지하고, 두 칸이면 위아래 또는 좌우 반반입니다.
+ * 반반은 고정입니다 — 두 칸의 쓰임(근월·차월처럼)은 대등해 한쪽을 키울 까닭이
+ * 없습니다. 위아래는 칸의 바닥 높이 아래로 줄지 않고, 모자라면 차트 자리가 세로로
+ * 굴립니다. */
 .chart-panes {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -238,11 +247,15 @@
   gap: 10px;
 }
 
-.chart-panes.is-split {
+.chart-panes.is-split.is-side {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
-/* 2분할에서 주문 대상인 칸. 얇은 초록 테두리와 배지 왼쪽의 초록 세로 바 —
+.chart-panes.is-split.is-stack {
+  grid-template-rows: 1fr 1fr;
+}
+
+/* 두 칸에서 주문 대상인 칸. 얇은 초록 테두리와 배지 왼쪽의 초록 세로 바 —
  * 채움 없이 표시만 합니다. 채우면 차트 위에 색 덩어리가 하나 더 서고, 초록
  * 채움은 「눌러도 되는 단추」로 읽힙니다. 같은 세로 바가 호가·주문 폼 머리에도
  * 서서 셋이 한 종목임을 잇습니다. 대상이 아닌 칸은 테두리가 구분선 색이고
@@ -263,27 +276,6 @@
 .chart-box.is-idle .chart-badge .up,
 .chart-box.is-idle .chart-badge .down {
   color: var(--text-dim);
-}
-
-/* 2분할 단추의 [1|2] 그림. */
-.chart-split {
-  gap: 4px;
-}
-
-.chart-split-icon {
-  display: inline-flex;
-  gap: 2px;
-}
-
-.chart-split-icon i {
-  width: 6px;
-  height: 11px;
-  border: 1.5px solid currentColor;
-  border-radius: 2px;
-}
-
-.chart-split[aria-pressed='true'] .chart-split-icon i {
-  background: currentColor;
 }
 
 /* 범례. 칸의 왼쪽 위에 글줄로 붙고, 차트를 가리지 않게 배경이 없습니다. */
@@ -489,7 +481,116 @@
   white-space: pre;
 }
 
-/* 그리기 도구. 세로 한 줄, 확대에서만 있습니다. */
+/* 낮은 칸이나 겹친 지표가 많은 칸에서 머리 범례를 접은 한 줄. 종가 · 「+3」 ·
+ * 지표들 · ▾ 차례입니다. 이 줄은 감기지 않습니다 — 넘치면 **지표 묶음만** 끝에서부터
+ * 지표 단위로 물러나고, ▾ 는 늘 줄 끝에 남습니다. 보통 글줄처럼 끝 항목부터 숨으면
+ * 펼칠 단추가 가장 먼저 사라집니다. */
+.legend-compact {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+/* 접힌 시가·고가·저가의 수. 넓은 칸의 「+n」과 같은 꼴입니다. */
+.legend-compact-more {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* 지표가 하나도 못 섰을 때 ▾ 앞에 서는 「지표 n」. 도구 줄이 접힐 때의 「지표 N ▾」
+ * 와 같은 꼴(같은 수 알약)이라, 같은 말로 읽힙니다. */
+.legend-compact-count {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-label);
+}
+
+/* 지표가 하나도 못 섰을 때의 지표 자리. 폭을 0 으로 접어 빈칸을 남기지 않습니다 —
+ * 안의 덩어리는 그대로 두어 다시 설 자리가 나는지 잴 수 있게 합니다. 앞뒤 사이 하나도
+ * 함께 거둡니다. */
+.legend-line > .legend-compact-items.is-empty {
+  flex: 0 0 0;
+  width: 0;
+  margin-right: -6px;
+}
+
+.legend-line > .legend-compact-items {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  height: 18px;
+  overflow: hidden;
+}
+
+/* 폭이 0 인 첫 항목. 줄의 첫 항목은 넘쳐도 다음 줄로 못 내려가 잘린 채 남으므로,
+ * 그 앞에 빈 항목을 두어 **첫 지표도 통째로 물러나게** 합니다. 지표 사이는 「·」가
+ * 띄웁니다. */
+.legend-line > .legend-compact-items::before {
+  content: '';
+  width: 0;
+  height: 18px;
+}
+
+/* 지표 하나 — 「·」, 선마다 색 점(이동평균은 점 옆에 기간), 이름. 한 덩어리로
+ * 서거나 물러납니다. */
+.legend-compact-item {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 18px;
+  color: var(--text-label);
+}
+
+.legend-compact-dot {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+}
+
+.legend-compact-name {
+  font-weight: 600;
+}
+
+/* 숨긴 지표는 점과 이름을 흐리게 둡니다 — 꺼진 것이 아니라 가려 둔 것입니다. */
+.legend-compact-item.is-hidden {
+  opacity: 0.4;
+}
+
+.legend-compact-open {
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--text-label);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.legend-compact-open:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* 접힌 줄을 펼친 범례. 접힌 줄 자리에서 차트 위로 덮이고, 봉 칸의 위 여백에는
+ * 셈하지 않습니다. 바깥을 누르거나 Esc 로 닫힙니다. */
+.legend-pop {
+  z-index: 4;
+  padding: 4px;
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(var(--ink) / 0.14);
+  pointer-events: auto;
+}
+
+/* 그리기 도구. 세로 한 줄입니다. 한 칸은 확대에서만, 두 칸은 「✎ 그리기」로 켜
+ * 두었거나 확대일 때 섭니다. */
 .draw-tools {
   display: flex;
   flex-direction: column;
@@ -528,6 +629,53 @@
   height: 1px;
   margin: 2px 4px;
   background: var(--border);
+}
+
+/* 두 칸에서 그리기 띠를 켜고 끄는 단추. 지표 단추 줄의 끝, ⚙ 뒤입니다.
+ * 확대에서는 띠가 늘 서 있어 눌린 채로 잠깁니다. */
+.chart-draw-toggle:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* 두 칸을 확대했을 때 오른쪽 열이 접힌 띠. 카드처럼 테두리를 두르고, 무엇이 접혀
+ * 있는지를 세로 글자로 적습니다. 띠 전체가 펼치는 단추입니다. */
+.expand-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 0;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-label);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.expand-strip:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.expand-strip-arrow {
+  font-size: 14px;
+}
+
+.expand-strip-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 한글을 한 자씩 세로로 세웁니다. 건수 배지는 가로 글자 그대로입니다. */
+.expand-strip-name {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  letter-spacing: 1px;
 }
 
 /* 차트 안의 종목 고르기는 **차트를 넘지 않습니다** — 판은 공용이고
@@ -873,9 +1021,10 @@
   margin-top: 4px;
 }
 
-/* 날마다 바뀌는 값(시가·정산가·정산일)을 안 바뀌는 규격에서 가르는 여백. 선이나
+/* 날마다 바뀌는 값(시가·정산가 등 시장자료)을 안 바뀌는 규격에서 가르는 여백. 선이나
  * 머리글은 두세 줄짜리 묶음에 소음이라 여백 하나로 가릅니다 — 항목 사이 여백의
- * 두 배쯤(행 36 안의 위아래 여백 합이 그만큼)입니다. */
+ * 두 배쯤(행 36 안의 위아래 여백 합이 그만큼)입니다. 국내·해외가 같은 여백을
+ * 씁니다. 규격 끝에 꼬리 문장이 붙어도 다음 표의 첫 줄과 붙지 않습니다. */
 .info-panel-daily {
   margin-top: 24px;
 }
@@ -1140,6 +1289,28 @@
   background: var(--down);
 }
 
+/* 방향색 단추는 손을 올리거나 누르는 동안에도 방향색을 지킵니다. 공용 단추의
+ * 올림·눌림 바탕(`.btn:hover`·`.btn:active`)은 옅은 회색이라, 그대로 덮이면 흰
+ * 글자가 바탕에 묻혀 단추가 하얗게 비어 보입니다. 못 누르는 단추(`disabled`·
+ * `aria-disabled`)는 공용 규칙대로 옅은 꼴을 그대로 둡니다. */
+.order-submit-buy:not(:disabled):not([aria-disabled='true']):hover,
+.order-submit-buy:not(:disabled):not([aria-disabled='true']):active {
+  background: var(--up);
+}
+
+.order-submit-sell:not(:disabled):not([aria-disabled='true']):hover,
+.order-submit-sell:not(:disabled):not([aria-disabled='true']):active {
+  background: var(--down);
+}
+
+/* 흰 글자를 얹은 방향색 단추는 손을 올리면 한 단 **어두워집니다**. 밝히면 흰
+ * 글자와의 대비가 읽기 기준(4.5:1) 아래로 내려갑니다 — 다른 채운 단추가 올림에
+ * 더 진한 색을 쓰는 것과 같은 방향입니다. */
+.order-submit.order-submit-buy:not(:disabled):not([aria-disabled='true']):hover,
+.order-submit.order-submit-sell:not(:disabled):not([aria-disabled='true']):hover {
+  filter: brightness(0.94);
+}
+
 /* 방금 얹힌 접수 줄. **한 번만 한 겹 깜빡입니다** — 「방금 이 줄이 생겼다」를
  * 말하는 표시라, 계속 깔아 두면 그 줄이 다른 줄과 **다른 종류**로 읽힙니다.
  * 방향색이 아닙니다: 이 줄은 체결된 것이 아니라 접수된 것입니다. */
@@ -1291,6 +1462,11 @@
   flex: 0 0 auto;
   min-height: 0;
   padding: 8px 16px 12px;
+}
+
+/* 좁은 카드에서 안내 문장이 줄을 바꿀 때 낱말 중간이 아니라 낱말 사이에서 넘깁니다. */
+.card-orders .notice-title {
+  word-break: keep-all;
 }
 
 /* 이 아래로는 표가 안 줄어듭니다. 사이드바를 열거나 창을 좁히면 종목 열이
@@ -2143,6 +2319,64 @@
   height: 26px;
   padding: 0 8px;
   font-size: 12px;
+}
+
+/* 좁은 띠에서 그림만 남긴 접기 단추. 띠의 다른 단추와 같은 높이의 정사각입니다
+ * (`CardHeadFold.tsx`). */
+.card-head-btn.is-icon {
+  justify-content: center;
+  width: 26px;
+  padding: 0;
+  font-size: 13px;
+}
+
+/* 탭 둘을 하나로 줄인 목록 단추. 탭 알약과 같은 모양에 ▾ 가 붙습니다. */
+.card-tab-menu-button {
+  gap: 4px;
+  padding: 0 8px 0 10px;
+}
+
+/* 그 단추의 ▾. 차트 칸 수 목록의 ▾ 와 같은 12px 입니다 — 더 작으면 「-」로 보여
+ * 앞의 건수와 붙어 「2 - 1」처럼 읽힙니다. */
+.card-tab-menu-chev {
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.8;
+}
+
+/* 고르지 않은 탭의 건수. ▾ 뒤의 흐린 알약에 짧은 이름과 함께 적어(「미결제 1」),
+ * 숨은 탭에 쌓인 것이 보이고 고른 탭의 건수와 갈라 읽히게 합니다. 글자는 탭 이름과
+ * 같은 라벨색입니다 — 숨은 탭의 주문을 알리는 자리라, 더 흐린 글자는 알약 바탕
+ * 위에서 읽기에 대비가 모자랍니다(밝은·어두운 화면 모두 4.5:1 미만). */
+.card-tab-other {
+  margin: 0 6px 0 4px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background-color: rgb(var(--ink) / 0.06);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-label);
+  white-space: nowrap;
+}
+
+/* 그 알약의 전체 이름(「미결제약정 1건」). 화면 읽기만 듣고 눈에는 짧은 이름이
+ * 섭니다. */
+.card-tab-other-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* 그 목록. 모양은 차트 칸 수 목록과 같고, 자리는 화면 기준입니다 — 주문 내역
+ * 카드는 제 안에서 자르므로 카드 안에 띄우면 잘립니다. */
+.card-tab-menu-list {
+  position: fixed;
+  right: auto;
+  z-index: 50;
 }
 
 /* 손잡이. 평소엔 옅게 서 있다가 카드에 손이 오면 진해지고, 손잡이 자체에 손이

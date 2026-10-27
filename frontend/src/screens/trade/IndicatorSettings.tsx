@@ -317,6 +317,113 @@ function Editor({
   )
 }
 
+/* 지표 하나를 켜고 끄는 동그라미. 설정 판의 목록과 좁은 도구 줄의 지표 목록이
+ * 같은 것을 씁니다 — 두 자리에서 켜진 모양이 다르면 같은 상태로 안 읽힙니다. */
+function IndicatorSwitch({ label, on, onToggle }: { label: string; on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className="ind-item-check"
+      role="switch"
+      aria-checked={on}
+      aria-label={`${label} ${on ? '끄기' : '켜기'}`}
+      onClick={onToggle}
+    >
+      {on ? '✓' : ''}
+    </button>
+  )
+}
+
+/** 접힌 도구 줄의 지표 한 줄. */
+export interface IndicatorMenuItem {
+  /** 단추에 적는 이름. */
+  name: string
+  /** 켜고 끄는 지표. 이 화면이 같은 이름의 다른 셈을 켰으면 그 지표입니다. */
+  target: string
+  /** 이름 옆에 흐리게 적는 우리말 이름. */
+  label: string
+  on: boolean
+  /** 켜도 차트에 안 서는 까닭. 있을 때만 적습니다. */
+  note?: string
+}
+
+/* 좁은 카드의 지표 묶음 — 「지표 N ▾」 단추와 켜기 목록.
+ *
+ * 카드가 좁아 지표 단추가 한 줄에 다 못 서면 이 단추 하나로 접힙니다. N 은 켜진
+ * 지표 수라, 목록을 열지 않아도 몇 개가 차트에 서 있는지 보입니다. 목록은 설정
+ * 판과 같은 스위치이고, 켜고 끄면 차트가 바로 바뀝니다 — 뒤를 잠그지 않습니다.
+ *
+ * 줄의 어디를 눌러도 그 스위치가 눌립니다. 바깥을 누르거나 Esc 로 닫힙니다. */
+export function IndicatorMenu({
+  items,
+  open,
+  onOpenChange,
+  onToggle,
+}: {
+  items: IndicatorMenuItem[]
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onToggle: (target: string) => void
+}) {
+  /* 단추와 목록을 함께 감쌉니다. 단추를 누른 것을 「바깥」으로 보면 닫히자마자
+     다시 열립니다. */
+  const ref = useRef<HTMLDivElement>(null)
+  const count = items.filter((item) => item.on).length
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (event: MouseEvent) => {
+      if (!ref.current?.contains(event.target as Node)) onOpenChange(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onOpenChange(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open, onOpenChange])
+
+  return (
+    <div className="chart-fold" ref={ref}>
+      <button
+        type="button"
+        className="btn btn-quiet chart-indicator chart-fold-btn"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={`지표 ${count}개 켜짐`}
+        onClick={() => onOpenChange(!open)}
+      >
+        지표
+        <span className="chart-fold-count" aria-hidden="true">
+          {count}
+        </span>
+        <span className="chart-fold-chev" aria-hidden="true">
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div className="chart-fold-menu" role="dialog" aria-label="지표 켜고 끄기">
+          {items.map((item) => (
+            <label key={item.name} className="ind-item" title={item.note}>
+              <span className="ind-item-name">
+                {item.name}
+                {item.label !== item.name && <small>{item.label}</small>}
+              </span>
+              <IndicatorSwitch label={item.label} on={item.on} onToggle={() => onToggle(item.target)} />
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function IndicatorSettingsPopover({ settings, onChange, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [picked, setPicked] = useState('MA')
@@ -356,16 +463,11 @@ export function IndicatorSettingsPopover({ settings, onChange, onClose }: Props)
             <button type="button" className="ind-item-name" onClick={() => setPicked(item.name)}>
               {item.label}
             </button>
-            <button
-              type="button"
-              className="ind-item-check"
-              role="switch"
-              aria-checked={on}
-              aria-label={`${item.label} ${on ? '끄기' : '켜기'}`}
-              onClick={() => onChange(item.name, { ...settings[item.name], on: !on })}
-            >
-              {on ? '✓' : ''}
-            </button>
+            <IndicatorSwitch
+              label={item.label}
+              on={on}
+              onToggle={() => onChange(item.name, { ...settings[item.name], on: !on })}
+            />
           </div>
         )
       })}

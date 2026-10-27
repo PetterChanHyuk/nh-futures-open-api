@@ -3,12 +3,12 @@ import { useEffect, useRef } from 'react'
 import { masterIndex, subscribeMaster } from '../../data/master'
 import { marketOf, valueWidthOf } from '../../lib/valueWidth'
 
-import type { ListEntry } from '../../data/account'
+import { useWatchPositions, type ListEntry } from '../../data/account'
 import { orderKindWord } from '../../data/accountRows'
 import { listFace, staleNote } from '../../lib/listFace'
 import { Count, Num, NumOrDash, currencyDigits, fracWidth, signSpace, toneOf } from '../../lib/number'
 import type { Fill, MarketContext, OpenOrder, Position, Quote } from '../../lib/types'
-import { MARKET_BADGE, NO_CODE_REASON } from '../../lib/labels'
+import { MARKET_BADGE, NO_CODE_REASON, POSITIONS_EMPTY } from '../../lib/labels'
 import type { EditMode } from './OrderForm'
 
 /* 값 좌우로 두는 여백. 칸 폭은 「값이 차지하는 자리 + 이만큼」입니다 —
@@ -64,6 +64,9 @@ interface Props {
     retry?: () => void
   }[]
   mode: Mode
+  /** 이 표가 지금 화면에 보이는지. 미결제약정 표는 보이는 동안 두 시장의 잔고를
+   *  되풀이해 다시 받습니다(`useWatchPositions`). */
+  watching?: boolean
   onEdit: (order: OpenOrder, edit: EditMode) => void
 }
 
@@ -368,10 +371,15 @@ export function OrdersAndFills({
   list,
   onRetry,
   mode,
+  watching = false,
   onEdit,
   onClose,
   positionNotes = [],
 }: Props) {
+  /* 표는 계좌 전체라 두 시장을 다 봅니다. 인증 정보가 없는 시장은 훅이 거릅니다. */
+  const watchingPositions = watching && mode === '미결제약정'
+  useWatchPositions('domestic', watchingPositions)
+  useWatchPositions('overseas', watchingPositions)
   const d = quote.decimals
   /* 이 종목이 분수로 불리면 주문·체결 가격도 그렇게 적습니다 — 같은 화면에서
      헤더는 `437'5` 인데 표는 `437.6472` 이면 두 값이 다른 것으로 읽힙니다. */
@@ -415,7 +423,7 @@ export function OrdersAndFills({
   if (mode === '미결제약정') {
     /* **「없다」와 「모른다」와 「못 받았다」를 가릅니다.** 못 받은 자리에
        「없습니다」를 세우면 있는 포지션을 없다고 말하게 됩니다. */
-    const face = listFace(list, '보유 포지션이 없습니다', onRetry)
+    const face = listFace(list, POSITIONS_EMPTY, onRetry)
     return (
       <div className="orders-band">
         {/* 값이 있는데 다시 받기가 안 된 자리에만 섭니다 — 그때 얼굴은

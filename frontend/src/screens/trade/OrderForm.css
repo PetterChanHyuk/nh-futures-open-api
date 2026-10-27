@@ -170,6 +170,20 @@
   gap: 4px;
 }
 
+/* 값 아래 한 줄(눈금 안내·오류)도 같은 한 열에 섭니다. 나란한 폼의 값 열 자리를
+ * 그대로 두면 한 열짜리 줄에 보이지 않는 둘째 열이 생겨, 줄 이름이 그 옆으로
+ * 밀려 글자 하나 폭으로 꺾입니다. */
+.card-form[data-tight] .order-limit {
+  grid-column: 1;
+}
+
+/* 종목 이름은 낱말 단위로 감깁니다 — 「12월 / 물」처럼 낱말 가운데서 끊기면
+ * 만기를 잘못 읽습니다. 한 낱말이 한 줄보다 길 때만 그 안에서 끊습니다. */
+.card-form[data-tight] .order-subject-name {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
 /* 선은 입력 칸의 테두리로 긋습니다. 선 아래 틈은 실행 단추의 위 여백(10)이
  * 맡습니다 — 입력 칸 안에 여백을 두면 그만큼 굴림이 먼저 섭니다. */
 .card-form[data-tight] .order-fields {
@@ -487,12 +501,22 @@
   white-space: nowrap;
 }
 
-/* 좁은 폼에서는 보유 글자가 두 줄로 감길 수 있어 줄 높이를 못 박지 않습니다. */
+/* 좁은 폼에서는 보유 글자가 두 줄로 감길 수 있어 줄 높이를 못 박지 않습니다.
+ * 보유 글자에 72px 도 안 남으면(폼 240 미만) 「그만두기」가 다음 줄 오른쪽으로
+ * 내려가고 보유 글자가 그 폭을 받습니다 — 그대로 두면 가장 좁은 폼에서
+ * 「매수 / 1계약 / 보유」처럼 낱말마다 한 줄씩 섭니다. */
 .card-form[data-tight] .order-editing {
+  flex-wrap: wrap;
+  row-gap: 4px;
   height: auto;
   min-height: 32px;
   padding-top: 4px;
   padding-bottom: 4px;
+}
+
+.card-form[data-tight] .order-editing .t-label {
+  flex: 1 1 72px;
+  min-width: 0;
 }
 
 .card-form[data-slot^='l'] > .order-form {

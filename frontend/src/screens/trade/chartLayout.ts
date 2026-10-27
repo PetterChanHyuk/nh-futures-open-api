@@ -17,6 +17,20 @@ const HEADROOM_MARGIN = 4
 /* 최고가 글자는 봉의 고가에서 이만큼 위를 가운데로 섭니다(라이브러리의
  * 최고·최저가 표 그림 — 꺾인 선 2px + 5px). */
 const HIGH_MARK_LIFT = 7
+/* 머리 여백을 그만 맞추는 몫. 범례 아래 끝에서 최고가 글자까지가 봉 칸 높이의
+ * 이만큼을 넘으면 봉이 설 자리가 거의 안 남습니다. */
+const HEADROOM_GIVE_UP = 0.6
+/* 최고가 글자 크기(라이브러리 기본값, 이 앱은 바꾸지 않습니다). 차트를 그리기
+ * 전에 머리가 들어갈지 미리 셀 때 씁니다. */
+export const HIGH_MARK_TEXT_SIZE = 10
+
+/** 범례 아래 끝이 `headBottom`(봉 칸 위에서 잰 값)일 때, 높이 `paneHeight` 인 봉
+ *  칸에서 최고가 표를 범례 밑에 세울 수 있는지. `headroomGap` 이 맞추기를 그만두는
+ *  문턱과 같은 셈입니다 — 이것이 거짓이면 범례가 최근 봉을 덮습니다. */
+export function headroomFits(headBottom: number, textSize: number, paneHeight: number): boolean {
+  const y = headBottom + HEADROOM_MARGIN + HIGH_MARK_LIFT + textSize / 2
+  return y > 0 && paneHeight > 0 && y / paneHeight < HEADROOM_GIVE_UP
+}
 
 /** 최고가 표가 범례(`headBottom`, 봉 칸 위에서 잰 아래 끝) 밑 4px 에 서게 하는
  *  위쪽 여백(px). 못 맞추면 `null`.
@@ -41,7 +55,7 @@ export function headroomGap(
   const y = headBottom + HEADROOM_MARGIN + HIGH_MARK_LIFT + textSize / 2
   /* 칸이 범례보다 조금 큰 정도면 봉이 설 자리가 거의 안 남습니다. 그때는
      겹침을 받아들이고 기본 여백으로 둡니다. */
-  if (!(y > 0) || !(h > 0) || !Number.isFinite(highY) || y / h >= 0.6) return null
+  if (!Number.isFinite(highY) || !headroomFits(headBottom, textSize, h)) return null
   const t = currentTop >= 1 ? currentTop / h : currentTop
   const d = (highY * (1 + t + BOTTOM_GAP)) / h - t
   const next = (y * (1 + BOTTOM_GAP) - h * d) / (h - y)
@@ -65,6 +79,18 @@ const SUB_PANE_SHARE = 0.45
  * 그래도 모자라면 카드가 세로로 스크롤합니다 — 봉이 0 높이가 되어 거래량만
  * 남는 차트는 차트가 아닙니다. */
 export const CANDLE_MIN = 160
+/* 머리 범례를 한 줄로 접은 칸에서 봉 칸이 내려갈 수 있는 끝. 이 높이에서는 머리
+ * 범례(종목 배지 + 시고저종 + 겹친 지표)가 두 줄이면 봉 위를 덮으므로, 범례를 한
+ * 줄로 접을 때만 이 바닥을 씁니다. 위아래 두 칸에서 거래량 칸 하나를 켠 칸의 바닥이
+ * 189 가 되어 1200×720 창의 차트 자리(두 칸 + 간격 = 389)에 스크롤 없이 들어갑니다.
+ * 이보다 더 낮은 창은 다시 카드가 세로로 스크롤합니다. */
+export const CANDLE_MIN_COMPACT = 132
+/* 표준 칸 바닥 — 봉 칸 바닥 + 아래 칸 하나 + 시간 축(217). 칸 하나가 받는 높이가
+ * 이보다 낮으면 머리 범례를 접습니다. 위아래 두 칸은 같은 높이를 받으므로 **두 칸
+ * 모두** 접힙니다 — 칸마다 켠 지표로 판정하면 같은 창에서 한 칸은 접히고 한 칸은
+ * 안 접혀 두 칸의 범례 모양이 갈립니다. 이보다 높아도 펼친 범례가 봉 칸에 안
+ * 들어가면 접습니다(`ChartView`). */
+export const SPLIT_PANE_FLOOR = CANDLE_MIN + PANE_FLOOR + 1 + X_AXIS_HEIGHT
 
 /** 아래 칸의 수와 높이 바닥을 정해 둔 차트의 규칙. 자리는 `order` 차례로 먼저
  *  나누고, 남는 자리에 나머지 켜진 지표를 정의 차례로 둡니다. */
@@ -111,13 +137,25 @@ export function fitPanes(chart: Chart, box: HTMLElement, expanded: boolean): voi
   const subs = panes.filter((pane) => pane.id !== CANDLE_PANE && pane.id !== X_AXIS_PANE)
   if (subs.length === 0) return
 
-  const room = box.clientHeight - X_AXIS_HEIGHT - subs.length
-  /* 아래 칸 몫은 비율로 정하되, 봉 칸의 바닥을 먹지는 못합니다. */
-  const budget = Math.min(Math.floor(room * SUB_PANE_SHARE), room - CANDLE_MIN)
-  const cap = expanded ? SUB_PANE_MAX_EXPANDED : SUB_PANE_MAX
-  const each = Math.max(PANE_FLOOR, Math.min(cap, Math.floor(budget / subs.length)))
+  const each = subPaneHeight(box.clientHeight, subs.length, expanded)
 
   for (const pane of subs) {
     chart.setPaneOptions({ id: pane.id, height: each, minHeight: Math.min(each, PANE_FLOOR) })
   }
+}
+
+/** 높이 `boxHeight` 인 차트 칸에서 아래 칸 하나가 받는 높이. 아래 칸 몫은 비율로
+ *  정하되 봉 칸의 바닥을 먹지 못하고, 칸 하나는 바닥과 상한 사이입니다. */
+function subPaneHeight(boxHeight: number, count: number, expanded: boolean): number {
+  const room = boxHeight - X_AXIS_HEIGHT - count
+  const budget = Math.min(Math.floor(room * SUB_PANE_SHARE), room - CANDLE_MIN)
+  const cap = expanded ? SUB_PANE_MAX_EXPANDED : SUB_PANE_MAX
+  return Math.max(PANE_FLOOR, Math.min(cap, Math.floor(budget / count)))
+}
+
+/** 높이 `boxHeight` 인 차트 칸의 봉 칸 높이 — 시간 축과 아래 칸들(칸마다 경계
+ *  1px)을 뺀 나머지입니다. `fitPanes` 가 놓을 높이를 차트를 그리기 전에 셉니다. */
+export function candlePaneHeight(boxHeight: number, count: number, expanded: boolean): number {
+  if (count === 0) return boxHeight - X_AXIS_HEIGHT
+  return boxHeight - X_AXIS_HEIGHT - count * (subPaneHeight(boxHeight, count, expanded) + 1)
 }

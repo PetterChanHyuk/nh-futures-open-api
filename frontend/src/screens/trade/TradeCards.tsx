@@ -10,8 +10,10 @@ import { fillCondFor } from '../../data/strategyRules'
 import { InstrumentHeader } from './InstrumentHeader'
 import { OrderBook } from './OrderBook'
 import { OrderForm } from './OrderForm'
+import { noteTradeNotice } from '../../data/alerts'
 import { ChartPanel } from './ChartPanel'
-import type { SlotState, SplitState } from './chartSlots'
+import { SplitViewSwitch } from './SplitViewSwitch'
+import type { Orient, SlotState, SplitState } from './chartSlots'
 import { MarketDataPanel, ProductInfoPanel } from './InfoPanels'
 import { OrdersAndFills } from './OrdersAndFills'
 import { OptionChain, type ChainSide } from './OptionChain'
@@ -175,7 +177,7 @@ export function renderResizers({
                 className="row-resizer"
                 role="separator"
                 aria-orientation="horizontal"
-                aria-label={`${split.label} 위아래 칸 높이 조절`}
+                aria-label={split.ariaLabel}
                 style={{ gridColumn: split.gridColumn, gridRow: 1, ...split.edge }}
                 onPointerDown={startRowResize(split.column)}
               />
@@ -187,7 +189,7 @@ export function renderResizers({
 type ChartCardArgs = Pick<
     GridValues,
     'cardProps' | 'cardHead' | 'chartExpandButton' | 'expandedChart' | 'chartTabStrip'
-    | 'chartTabsInBody' | 'activeTab' | 'chartExpanded' | 'setChartExpanded'
+    | 'chartTabsInBody' | 'activeTab' | 'chartExpanded' | 'setChartExpanded' | 'splitView'
   > &
   Pick<
     ChainPickValues,
@@ -248,8 +250,31 @@ export function renderChartCard({
   shownQuote,
   activeContext,
   priceKnown,
+  splitView,
 }: ChartCardArgs) {
+  /* 두 칸을 켜고 끄거나 놓임을 바꿉니다. 처음 켤 때 둘째 칸이 비어 있으면 이
+     종목의 차월물로 시작합니다. 끄면 첫째 칸이 한 칸으로 남고 주문 대상도 첫째로
+     돌아옵니다 — 둘째 칸의 종목·봉 종류·지표는 기억해 다시 켜면 그대로입니다.
+     둘째 칸이 대상이었으면 헤더·호가·주문 폼의 종목이 바뀌므로 한 줄로 알립니다. */
+  const changeSplit = ({ split, orient }: { split: boolean; orient: Orient }) => {
+    const slots: [SlotState, SlotState] = [splitState.slots[0], splitState.slots[1]]
+    if (split && !slots[1].instrument) {
+      slots[1] = { ...slots[1], instrument: nextMonthOf(subject) }
+    }
+    if (!split && splitState.split && splitState.active === 1 && secondSelected) {
+      noteTradeNotice({
+        label: '주문 대상 바뀜',
+        text: `두 칸을 끄면서 주문 대상이 첫째 칸(${quote.name})으로 바뀌었습니다`,
+        urgent: false,
+        mergeKey: 'trade|split-target',
+      })
+    }
+    setSplitState({ ...splitState, split, orient, slots, active: split ? splitState.active : 0 })
+  }
+
+  /* 두 칸을 확대하면 오른쪽 열이 접힌 띠가 카드 옆 격자 열에 섭니다. */
   return (
+      <>
         <section className="trade-card card-chart" aria-label={CARD_LABEL.chart} {...cardProps('chart')}>
           {/* 이 카드가 제 자리에 혼자 서면 탭 줄이 곧 이름입니다 — 「차트」
               이름 옆에 「차트」 탭을 세우면 같은 글자가 두 번 섭니다. 띠 왼쪽의
@@ -258,9 +283,20 @@ export function renderChartCard({
               다른 카드와 한 자리에 서면 띠는 **자리의 탭 줄**이 되고, 차트가
               무엇을 보여줄지 고르는 이 줄은 본문 첫 줄로 내려갑니다 — 한 띠에
               탭 줄이 둘이면 어느 것이 자리를 바꾸는지 알 수 없습니다. */}
+          {/* 머리 띠 오른쪽: [한 칸 | 두 칸 ▾] 과 확대. 칸 수는 이 카드의 배치라 어느
+              탭에서든 섭니다 — 품목정보나 체인을 보는 동안에도 두 칸을 끌 수 있어야
+              합니다. 확대는 차트를 키우는 것이라 차트 탭에서만 섭니다. */}
           {cardHead(
             'chart',
-            chartExpandButton,
+            <>
+              <SplitViewSwitch
+                split={splitState.split}
+                orient={splitState.orient}
+                sideNarrow={splitView.sideNarrow}
+                onChange={changeSplit}
+              />
+              {chartExpandButton}
+            </>,
             expandedChart ? undefined : chartTabStrip,
           )}
 
@@ -348,14 +384,7 @@ export function renderChartCard({
                 expanded={chartExpanded}
                 onExpandedChange={setChartExpanded}
                 split={splitState.split}
-                onSplitChange={(split) => {
-                  /* 처음 켤 때 둘째 칸은 이 종목의 차월물로 시작합니다. */
-                  const slots: [SlotState, SlotState] = [splitState.slots[0], splitState.slots[1]]
-                  if (split && !slots[1].instrument) {
-                    slots[1] = { ...slots[1], instrument: nextMonthOf(subject) }
-                  }
-                  setSplitState({ ...splitState, split, slots })
-                }}
+                orient={splitState.orient}
                 active={splitState.active}
                 onActiveChange={(active) => {
                   setSplitState({ ...splitState, active })
@@ -366,6 +395,8 @@ export function renderChartCard({
                   pickFromCode(code ? resolve(code) : null)
                 }}
                 onPickInstrument={pickInstrument}
+                drawTools={splitView.drawTools}
+                onDrawToolsChange={splitView.setDrawTools}
               />
             )}
             {/* 정산·장운영은 품목의 성질이라 품목정보 안에 섭니다. */}
@@ -377,12 +408,14 @@ export function renderChartCard({
             )}
           </div>
         </section>
+        {splitView.expandStrip}
+      </>
   )
 }
 
 type BottomCardsArgs = Pick<
     GridValues,
-    'expandedChart' | 'collapsedFor' | 'cardProps' | 'cardHead' | 'bottomHeadActions'
+    'expandedChart' | 'collapsedFor' | 'cardShown' | 'cardProps' | 'bottomHead'
   > &
   Pick<OrderValues, 'startClosing' | 'startEditing'> &
   Pick<QuoteValues, 'shownQuote'> &
@@ -399,9 +432,9 @@ type BottomCardsArgs = Pick<
 export function renderBottomCards({
   expandedChart,
   collapsedFor,
+  cardShown,
   cardProps,
-  cardHead,
-  bottomHeadActions,
+  bottomHead,
   startClosing,
   shownQuote,
   context,
@@ -425,7 +458,7 @@ export function renderBottomCards({
             data-collapsed={collapsedFor(card) ? 'true' : undefined}
             {...cardProps(card)}
           >
-            {cardHead(card, bottomHeadActions(card))}
+            {bottomHead(card)}
 
             {!collapsedFor(card) && !expandedChart && (
               <div className="trade-bottom-wrap">
@@ -456,6 +489,9 @@ export function renderBottomCards({
                     retry: side.entry.failure === 'retry' ? () => retryList(side.market, 'positions') : undefined,
                   }))}
                   mode={card === 'orders' ? '주문체결상세' : '미결제약정'}
+                  /* 같은 자리의 다른 탭이 열려 있으면 이 표는 감춰져 있습니다 —
+                     그동안은 다시 받지 않습니다. */
+                  watching={card === 'positions' && cardShown(card)}
                   onEdit={startEditing}
                 />
               </div>

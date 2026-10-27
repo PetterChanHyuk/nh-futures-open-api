@@ -44,6 +44,25 @@ def test_알림_설정을_담고_다시_읽는다(store):
     assert UiStore(store.path).read()["values"]["nh.alerts"] == 설정
 
 
+def test_전략주문_탭_보이기를_끄고_켜며_다시_읽는다(store):
+    """상단 전략주문 탭을 보일지는 참·거짓 하나입니다. 끈 값과 다시 켠 값이 모두 그대로 남습니다."""
+    store.patch({"nh.nav.strategy": False})
+    assert UiStore(store.path).read()["values"]["nh.nav.strategy"] is False
+
+    store.patch({"nh.nav.strategy": True})
+    assert UiStore(store.path).read()["values"]["nh.nav.strategy"] is True
+
+
+def test_두_칸_배치를_담고_다시_읽는다(store):
+    """차트 두 칸일 때의 배치는 한 칸 배치와 따로 담깁니다. 값은 화면이 정한 객체 그대로입니다."""
+    배치 = {"ordersOpen": True, "ordersHeight": 260, "columns": {"r1Width": 320, "r2Width": 280}}
+    store.patch({"nh.trade.splitLayout": 배치})
+
+    값 = UiStore(store.path).read()["values"]
+    assert 값["nh.trade.splitLayout"] == 배치
+    assert "nh.trade.layout" not in 값
+
+
 def test_보낸_항목만_바꾸고_나머지는_둔다(store):
     """한 화면이 제 항목만 고쳐도 다른 화면의 값이 지워지면 안 된다."""
     store.patch({"nh.home.watch": ["A7569000"]})
@@ -75,7 +94,7 @@ def test_모르는_이름도_거절한다(store):
 
 def test_옮기는_항목과_남기는_항목이_겹치지_않는다():
     assert set(STORED_KEYS) & set(DEVICE_KEYS) == set()
-    assert len(STORED_KEYS) == 6
+    assert len(STORED_KEYS) == 8
     assert len(DEVICE_KEYS) == 7
 
 

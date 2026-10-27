@@ -316,8 +316,12 @@ export function useOrderTicket({
   }, [closing, shownQuote.code, closePriceFrom, shownFailure, price, side, orderType, environmentKnown, credentialsWhy])
 
   /* 청산 대상 포지션. 정정·취소와 같은 폼을 쓰지만 하는 일이 달라 따로 둡니다 —
-     정정은 낸 주문을 고치는 것이고 청산은 새 주문을 내는 것입니다. */
-  const startClosing = (position: Position) => {
+     정정은 낸 주문을 고치는 것이고 청산은 새 주문을 내는 것입니다.
+
+     `open` 은 종목을 화면으로 가져오는 길입니다. 화면 안의 잔고 줄에서 누르면
+     주문 대상 칸으로 가는 길이고, 계좌 패널처럼 밖에서 왔으면 밖에서 여는 길을
+     넘겨받습니다 — 두 칸 보기에서 두 길이 고르는 칸이 다릅니다. */
+  const startClosing = (position: Position, open: (code: string) => void = openCode) => {
     /* 못 푸는 종목이면 폼도 건드리지 않습니다. 화면은 그대로 두고 폼만 청산으로
        바꾸면, 보고 있는 종목을 그 수량만큼 청산하겠다는 폼이 서서 **내는 것이
        틀립니다.** */
@@ -333,7 +337,7 @@ export function useOrderTicket({
        무엇을 청산하는지와 화면이 보여주는 것이 어긋납니다. */
     keepModeForRef.current = position.code
     closeCheckRef.current = position
-    openCode(position.code)
+    open(position.code)
 
     setEditing(null)
     setClosing(position)

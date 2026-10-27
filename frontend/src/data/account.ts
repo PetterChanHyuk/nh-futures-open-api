@@ -10,6 +10,8 @@
  *  **저절로 부르는 곳과 눌러야 부르는 곳이 갈립니다.** 홈은 훑는 화면이라 열릴
  *  때 저절로 부르고, 계좌 화면은 탭을 연 것만 부릅니다. 계좌 조회에는 초당
  *  한도가 있어(계좌마다 열), 안 보는 자리까지 부르면 보는 자리가 밀립니다.
+ *  미결제약정 표만은 보고 있는 동안 시장마다 초당 한 번 다시 받습니다
+ *  (`useWatchPositions`).
  *
  *  **손질은 여기서 하지 않습니다.** 백엔드가 이미 화면 모양으로 냅니다
  *  (`domestic_account.py` · `overseas_account.py`). 여기서 다시 더하거나 고치면
@@ -26,6 +28,7 @@ import { useEffect, useRef, useSyncExternalStore } from 'react'
 import {
   accepts,
   environmentOf,
+  environmentSettled,
   generation,
   marketConfigured,
   onEnvironmentChange,
@@ -33,7 +36,7 @@ import {
   type Environment,
 } from './environment'
 import { kstClock } from '../lib/kst'
-import { MINUS } from '../lib/number'
+import { MINUS, currencyDigits } from '../lib/number'
 
 /** 네 칸(총액·현금·대용·외화)을 가진 줄. 국내는 일곱 줄 모두, 해외는 둘뿐입니다. */
 export interface DepositRow {
@@ -287,7 +290,7 @@ const WAITING: DepositEntry = { ...EMPTY, status: 'loading' }
  *
  *  **설정도 한 번은 읽고 나서 냅니다.** 환경을 먼저 알고 설정이 늦게 오면, 인증
  *  정보가 빈 시장을 「아직 모름」으로 보고 불러 오류만 남깁니다. */
-function useEnvironmentSettled(): boolean {
+export function useEnvironmentSettled(): boolean {
   const { status, configRead } = useEnvironment()
   return (status === 'ready' || status === 'failed') && configRead
 }
@@ -358,6 +361,30 @@ export function isDomesticDeposit(
   value: DomesticDeposit | OverseasDeposit | null,
 ): value is DomesticDeposit {
   return value !== null && !('groups' in value)
+}
+
+/** 예수금 답에서 칸 하나의 총액. 네 칸 줄이면 첫 칸(총액)이고, 해외에서 그 이름의
+ *  네 칸 줄이 없으면 총액 하나뿐인 줄에서 찾습니다. 없으면 `null` 입니다.
+ *
+ *  계좌 화면의 요약 띠와 사이드바의 계좌 패널이 **같은 칸을 같은 길로** 읽습니다 —
+ *  두 자리가 「주문가능」을 다르게 찾으면 같은 이름 아래 다른 수가 섭니다. */
+export function depositAt(value: DomesticDeposit | OverseasDeposit, key: string): number | null {
+  const domestic = isDomesticDeposit(value)
+  const rows = domestic ? value.items : value.groups
+  const row = rows.find((one) => one.key === key)
+  if (row) return row.values[0] ?? null
+  if (domestic) return null
+  return new Map(value.items.map((one) => [one.key, one.value])).get(key) ?? null
+}
+
+/** 예수금 답의 금액을 적을 자릿수와 통화. 해외 자릿수는 답이 실어 준 통화 자릿수가
+ *  먼저이고, 없으면 통화 코드로 정합니다 — 원화 환산이면 원이라 0 입니다. */
+export function depositUnit(value: DomesticDeposit | OverseasDeposit): {
+  decimals: number
+  currency: string | null
+} {
+  if (isDomesticDeposit(value)) return { decimals: 0, currency: 'KRW' }
+  return { decimals: value.decimals ?? currencyDigits(value.currency) ?? 2, currency: value.currency }
 }
 
 /* ── 목록: 잔고 · 주문내역/미체결 · 주문오류 · 누적손익 ──────
@@ -1130,9 +1157,180 @@ export function reloadAccountLists(market: DepositMarket): void {
   }
 }
 
+/* ── 미결제약정 되풀이 조회 ────────────────────────────────
+ *
+ * 미결제약정 표의 현재가·평가손익은 서버가 잔고 조회 답에 실어 주는 값이라, 다시
+ * 묻지 않으면 처음 받은 값에 멈춰 있습니다. 그래서 **표를 보고 있는 동안만** 시장마다
+ * 일정한 간격으로 다시 받습니다. 보는 자리가 없거나 창이 숨으면 멈춥니다.
+ *
+ * 다시 받은 답이 들고 있는 값과 같으면 **아무것도 알리지 않습니다** — 표가 다시
+ * 그려지지 않고, 폭을 다시 재지도 않습니다. 다르면 바뀐 줄만 새것으로 갈아
+ * 끼우고 나머지 줄은 그대로 둡니다. 「받는 중」 표시도 세우지 않습니다 — 매초
+ * 머리 줄이 깜박이면 값을 읽을 수 없습니다. */
+
+/** 미결제약정을 다시 받는 간격(ms). 계좌 조회 한도는 계좌마다 초당 열 번이고
+ *  국내·해외가 각자의 한도를 씁니다. 이 간격이면 시장마다 초당 한 번이라 그 한도의
+ *  10분의 1 만 쓰고, 나머지는 주문 목록·예수금·이어 받기 같은 다른 조회에 남습니다. */
+export const POSITIONS_REFRESH_MS = 1000
+
+/** 시장마다 미결제약정을 보고 있는 자리 수. 두 화면이 같은 시장을 보아도 조회는
+ *  하나만 돕니다. */
+const positionWatchers = new Map<DepositMarket, number>()
+/** 시장마다 도는 되풀이 시계. 보는 자리가 있고 창이 보일 때만 있습니다. */
+const positionTimers = new Map<DepositMarket, number>()
+
+/** 같은 값인지. 서버가 준 JSON 그대로라 글자로 견줘도 됩니다. */
+function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+/** 새 답의 줄 가운데 **들고 있던 줄과 같은 것은 들고 있던 것을 그대로** 씁니다.
+ *  전부 같으면 들고 있던 배열을 그대로 돌려줍니다 — 그래야 받는 쪽이 「바뀐 것이
+ *  없다」를 알아봅니다. */
+function keepSameRows(held: readonly unknown[], answered: readonly unknown[]): unknown[] {
+  let changed = held.length !== answered.length
+  const next = answered.map((row, index) => {
+    if (index < held.length && sameJson(held[index], row)) return held[index]
+    changed = true
+    return row
+  })
+  return changed ? next : (held as unknown[])
+}
+
+/** 미결제약정을 조용히 다시 받습니다. `loadList` 와 같은 물음을 내고 같은 규칙으로
+ *  답을 거르지만, 묻는 동안 「받는 중」을 세우지 않고, 값이 같으면 알리지 않습니다.
+ *
+ *  답에 다음 쪽이 있으면(포지션이 한 쪽을 넘음) 여기서 잇지 않고 `loadList` 에
+ *  넘깁니다 — 첫 쪽만 갈아 끼우면 뒤 쪽 줄과 어긋납니다. */
+async function refreshPositions(market: DepositMarket): Promise<void> {
+  const kind: ListKind = 'positions'
+  const key = listKey(market, kind)
+  const since = generation()
+  flyingLists.set(key, since)
+  try {
+    const response = await fetch(listPath(market, kind), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: listBody(market, kind),
+    })
+    if (since !== generation()) return
+    if (!accepts(response, since)) {
+      discardList(key)
+      return
+    }
+    const now = lists.get(key)
+    if (!now || now.rows == null) return
+    if (!response.ok) {
+      /* 받아 둔 줄은 그대로 두고 실패만 적습니다. 같은 실패가 이어지면 다시
+         알리지 않습니다. */
+      const failure: DepositFailure = response.status === 502 ? 'rejected' : 'retry'
+      if (now.failure !== failure) announceList(key, { ...now, failure })
+      return
+    }
+    const body = (await response.json()) as Record<string, unknown>
+    if (nextKeyOf(body) !== null) {
+      reask.add(key)
+      return
+    }
+    const answered = Array.isArray(body[ROWS_FIELD[kind]]) ? (body[ROWS_FIELD[kind]] as unknown[]) : []
+    const rows = keepSameRows(now.rows, answered)
+    const environment = environmentOf(response)
+    const unchanged =
+      rows === now.rows &&
+      sameJson(now.extra, body) &&
+      now.failure === null &&
+      now.environment === environment &&
+      now.nextKey === null
+    if (unchanged) return
+    announceList(key, {
+      ...now,
+      status: 'ready',
+      environment,
+      rows,
+      extra: body,
+      failure: null,
+      nextKey: null,
+      filling: false,
+      capped: false,
+      refreshing: false,
+    })
+  } catch {
+    if (since !== generation()) return
+    const now = lists.get(key)
+    if (now?.rows != null && now.failure !== 'retry') announceList(key, { ...now, failure: 'retry' })
+  } finally {
+    if (flyingLists.get(key) === since) {
+      flyingLists.delete(key)
+      if (reask.delete(key)) void loadList(market, kind)
+    }
+  }
+}
+
+/** 한 번의 되풀이. **받아 둔 줄이 서 있을 때만** 다시 묻습니다 — 처음 받기와 실패한
+ *  뒤 다시 받기는 보는 자리와 「다시 받기」 단추의 몫입니다. 앞 물음이 아직 나가
+ *  있으면 이번 차례는 건너뜁니다(겹쳐 묻지 않습니다). 환경을 바꾸는 중이면 묻지
+ *  않습니다. */
+function pollPositions(market: DepositMarket): void {
+  const key = listKey(market, 'positions')
+  const held = lists.get(key)
+  if (!held || held.rows == null || held.filling || held.status !== 'ready') return
+  if (!environmentSettled()) return
+  if (flyingLists.get(key) === generation()) return
+  void refreshPositions(market)
+}
+
+function startPositionTimer(market: DepositMarket): void {
+  if (positionTimers.has(market)) return
+  if (document.visibilityState !== 'visible') return
+  pollPositions(market)
+  positionTimers.set(market, window.setInterval(() => pollPositions(market), POSITIONS_REFRESH_MS))
+}
+
+function stopPositionTimer(market: DepositMarket): void {
+  const timer = positionTimers.get(market)
+  if (timer === undefined) return
+  window.clearInterval(timer)
+  positionTimers.delete(market)
+}
+
+/* 창이 숨으면 모든 시장의 되풀이를 멈추고, 다시 보이면 보는 자리가 있는 시장만
+   다시 돌립니다. */
+document.addEventListener('visibilitychange', () => {
+  for (const [market, count] of positionWatchers) {
+    if (count > 0 && document.visibilityState === 'visible') startPositionTimer(market)
+    else stopPositionTimer(market)
+  }
+})
+
+/** 이 자리가 그 시장의 미결제약정을 보고 있다고 알립니다. 돌려준 함수를 부르면
+ *  보기를 그칩니다. 보는 자리가 하나라도 있는 동안 그 시장의 되풀이가 돕니다. */
+function watchPositions(market: DepositMarket): () => void {
+  positionWatchers.set(market, (positionWatchers.get(market) ?? 0) + 1)
+  startPositionTimer(market)
+  return () => {
+    const left = (positionWatchers.get(market) ?? 1) - 1
+    positionWatchers.set(market, left)
+    if (left <= 0) stopPositionTimer(market)
+  }
+}
+
+/** 미결제약정 표가 그 시장의 값을 보고 있는 동안 되풀이해 다시 받습니다.
+ *  `watching` 은 표가 **지금 화면에 보이는지**입니다 — 탭 뒤에 숨은 표는 거짓을
+ *  줍니다. 환경을 아직 모르거나 그 시장의 인증 정보가 없으면 돌지 않습니다. */
+export function useWatchPositions(market: DepositMarket, watching: boolean): void {
+  const settled = useEnvironmentSettled()
+  const credentialed = useMarketCredentialed(market)
+  const on = watching && settled && credentialed
+  useEffect(() => {
+    if (!on) return
+    return watchPositions(market)
+  }, [market, on])
+}
+
 /** 창이 **다시 보일 때** 한 번 부릅니다. 저절로 되풀이해 부르지는 않습니다 —
  *  계좌 조회의 초당 한도를 보는 자리들이 나눠 씁니다. 다른 창에 다녀온 사이에
- *  생긴 변화(앱 밖 체결 등)를 그 자리가 한 번 새로 받습니다.
+ *  생긴 변화(앱 밖 체결 등)를 그 자리가 한 번 새로 받습니다. 미결제약정 표는
+ *  보는 동안 따로 되풀이해 받습니다(`useWatchPositions`).
  *
  *  서 있는 자리만 부릅니다 — 화면에 없는 자리는 이 신호를 듣지 않습니다. */
 export function useReloadWhenShown(reload: () => void, enabled: boolean): void {

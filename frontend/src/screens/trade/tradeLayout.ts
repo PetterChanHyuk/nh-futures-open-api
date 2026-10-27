@@ -195,11 +195,15 @@ export const CARD_HIDE_NOTE: Partial<Record<CardKey, string>> = {
  *          여백 20 과 막대 13 을 더한 값입니다 — **행보다 머리가 넓어 머리가
  *          바닥을 정합니다.** 이 카드만 폭이 아니라 높이로 모양이 갈리므로,
  *          제 열에서 남는 높이는 이 카드가 가집니다
- *   주문   폼 한 벌. 셀렉트와 실행 단추까지 한 화면에 듭니다. 폭 240 은 **좁은
+ *   주문   폼 한 벌. 셀렉트와 실행 단추까지 한 화면에 듭니다. 폭 190 은 **좁은
  *          폼**의 바닥입니다 — `FORM_ROOMY`(280)보다 좁으면 줄 이름이 입력칸
- *          위로 올라가고 실행 단추가 카드 아래에 붙박입니다. 끌기 바닥과 카드
- *          옮김 바닥을 같은 값으로 둡니다: 좁은 폼은 어느 자리에서도 240 에서
- *          온전히 서므로 둘을 가를 까닭이 없습니다
+ *          위로 올라가고 실행 단추가 카드 아래에 붙박입니다. 190 은 앱 틀 960
+ *          에 최근 본 패널을 연 창에서 세 열이 화면 안에 드는 값입니다: 그 창의
+ *          작업 폭 712 에서 경계 둘(24)과 세로 막대 자리(13)를 빼면 675 이고,
+ *          그것이 넓은 열 285 + 호가 200 + 주문 190 입니다. 더 넓게 두면 화면이
+ *          옆으로 밀려 주문 폼의 오른쪽이 잘립니다. 끌기 바닥과 카드 옮김 바닥을
+ *          같은 값으로 둡니다: 좁은 폼은 어느 자리에서도 190 에서 온전히 서므로
+ *          둘을 가를 까닭이 없습니다
  *
  * 여기에 머리 비용이 얹힙니다 — 카드 머리 띠 36 + 본문 위 여백. 앞은 모두
  * 같고 뒤만 다릅니다(차트 10 · 표 8 · 호가 6 · 주문 12): 띠는 껍데기라 다
@@ -239,7 +243,7 @@ export const CARD_MIN: Record<CardKey, { width: number; height: number }> = {
   positions: { width: 379, height: 212 },
   book: { width: 200, height: 312 },
   ticks: { width: 148, height: 140 },
-  form: { width: 240, height: 355 },
+  form: { width: 190, height: 355 },
 }
 
 /** 주문 폼이 줄 이름과 입력칸을 한 줄에 나란히 두는 폭(px). 이보다 좁으면 좁은
@@ -295,7 +299,7 @@ const MAX_HEIGHT = 720
  *
  * 크기 기본값은 왼쪽 위 355(차트), 오른쪽 첫 열 위 312(호가), 좁은 열 폭
  * 200(호가 바닥)·280(주문 폼이 나란히 서는 폭 `FORM_ROOMY`). 주문 폼은 바닥
- * (240, 좁은 폼)이 아니라 나란한 폼으로 시작합니다 — 좁은 폼은 사용자가 경계를
+ * (190, 좁은 폼)이 아니라 나란한 폼으로 시작합니다 — 좁은 폼은 사용자가 경계를
  * 끌어 고르는 모양입니다. **312 는 배지가 없는 값**이라,
  * 2분할에서 호가에 종목 배지 줄이 서면 그만큼(`BOOK_SUBJECT_ROW`) 더합니다.
  *
@@ -744,11 +748,15 @@ export function fitLayout(layout: TradeLayout, usable: number): TradeLayout {
   }
 }
 
-/** 넓은 열이 좁은 창에서 내려갈 수 있는 끝(px). 차트의 도구 줄(일·분, 지표
- *  다섯, 설정)이 한 줄에 다 들어가는 폭입니다. 이보다 좁으면 설정 단추부터
- *  카드 밖으로 잘려 누를 수 없게 되므로, 그때는 더 줄이지 않고 화면이 옆으로
- *  밀립니다. 주문 내역 표는 이 폭에서 제 안에서 옆으로 밀려 열이 다 남습니다. */
-const WIDE_SQUEEZE_MIN = 340
+/** 넓은 열이 좁은 창에서 내려갈 수 있는 끝(px). 차트 카드의 머리 띠(손잡이, 탭 둘,
+ *  칸 수 단추 그림, 확대 단추)가 잘리지 않고 다 들어가는 폭입니다 — 확대 단추의
+ *  오른쪽 끝이 카드 왼쪽에서 252 이고, 띠의 오른쪽 여백만 조금 줄어듭니다.
+ *  주문 내역 카드의 머리 띠는 좁아지면 제 안에서 접혀(「부터」 빼기 → 접기 단추
+ *  그림 → 탭 하나와 ▾) 이보다 좁아도 들어가고, 차트의 도구 줄도 좁은 카드에서
+ *  지표 단추를 한 단추로 접습니다. 이 아래로 내려가면 차트 카드의 확대 단추가 카드
+ *  밖으로 잘려 누를 수 없게 되므로, 그때는 더 줄이지 않고 화면이 옆으로 밀립니다.
+ *  주문 내역 표는 이 폭에서 제 안에서 옆으로 밀려 열이 다 남습니다. */
+const WIDE_SQUEEZE_MIN = 254
 
 /** 넓은 열이 지금 서는 바닥. 평소에는 제 카드의 바닥(`leftMinWidth`)이고, 좁은
  *  열 둘이 끝까지 줄어도(`fitLayout`) 모자라는 창에서만 남는 폭까지 내려갑니다 —
@@ -869,4 +877,133 @@ export function withFixedHeight(
   const min = slotFloor(layout, fixedSlot(column), subject)
   const next = clamp(height, min, fixedMaxHeight(layout, column, available, subject), min)
   return column === 'left' ? { ...layout, lbHeight: next } : { ...layout, r1tHeight: next }
+}
+
+/* ── 두 칸 배치 ──────────────────────────────────────────
+ *
+ * 차트를 두 칸으로 보는 동안에는 차트가 왼쪽 열 전체 높이를 쓰고, 왼쪽 열
+ * 아래에 서던 카드(기본 배치에서는 주문체결상세·미결제약정)가 오른쪽 두 열 아래로
+ * 옮겨 가 두 열 폭으로 섭니다. 두 칸은 위아래로 나뉘어 한 칸보다 높이가 많이
+ * 들고, 주문 내역은 넓은 표라 두 열 폭이면 열을 다 펴기 때문입니다.
+ *
+ * **두 칸 배치의 값은 한 칸 배치와 따로 남깁니다**(주문 내역 펼침·높이·두 열
+ * 폭). 두 칸에서 넓혀 둔 호가 열이 한 칸 화면으로 새어 나오지 않고, 두 칸을
+ * 끄면 한 칸 배치가 켜기 전과 똑같이 섭니다. 카드가 어느 자리에 서는지(슬롯)와
+ * 열 순서, 호가 높이는 한 칸 배치의 값을 그대로 읽기만 합니다. */
+
+export const SPLIT_LAYOUT_KEY = 'nh.trade.splitLayout'
+
+export interface SplitLayout {
+  /** 주문 내역을 펼쳐 두는지. `null` 은 아직 고른 적이 없다는 뜻이고, 그때는 앱
+   *  틀의 높이로 정합니다(`SPLIT_OPEN_FRAME`). */
+  ordersOpen: boolean | null
+  /** 펼친 주문 내역의 높이(px). 위 경계를 끌어 바꿉니다. */
+  ordersHeight: number
+  /** 오른쪽 두 열의 폭(px). 한 칸 배치의 `r1Width`·`r2Width` 와 같은 뜻입니다. */
+  columns: { r1Width: number; r2Width: number }
+}
+
+/** 펼친 주문 내역의 기본 높이(px). 표 머리와 네 줄 남짓이 섭니다. */
+export const SPLIT_ORDERS_HEIGHT = 260
+
+/** 두 칸 배치에서 호가 열의 기본 폭(px) — 호가 카드의 폭 상한과 같습니다. 주문
+ *  열(`FORM_ROOMY`)과 경계를 더한 두 열 폭(612)이 주문 내역 표의 열 여섯(현재가
+ *  포함)을 다 펴는 폭(`ORDERS_WIDE`)을 넘습니다. 상한과 같게 두어, 남긴 값과
+ *  보이는 폭이 같습니다. */
+export const SPLIT_BOOK_WIDTH = CARD_MAX_WIDTH.book ?? 320
+
+/** 주문 내역을 처음에 펼쳐 둘 앱 틀 높이(px). 이보다 낮은 창에서는 접힌 띠로
+ *  시작합니다 — 펼치면 주문 폼이 바닥에 닿아 첫 화면이 스크롤로 시작합니다. */
+export const SPLIT_OPEN_FRAME = 900
+
+/** 시세체결 한 줄의 높이(px). `trade.css` 의 `.tick-row` 와 같은 값입니다. */
+export const TICK_ROW = 20
+
+/** 두 칸 배치에서 시세체결이 줄어드는 끝 — 머리와 여섯 줄입니다. 주문 내역을
+ *  늘리면 시세체결이 먼저 여기까지 줄고, 그다음 호가가 줄어 제 안에서 굴립니다. */
+export const SPLIT_TICKS_FLOOR = CARD_MIN.ticks.height + TICK_ROW
+
+/** 두 칸 배치에서 호가가 줄어드는 끝(px). 이보다 줄지 않고, 사다리(다섯 단계씩)는
+ *  카드 안에서 굴립니다. */
+export const SPLIT_BOOK_FLOOR = 160
+
+/** 두 칸을 확대했을 때 오른쪽 열이 접혀 남는 띠의 폭(px). */
+export const EXPAND_STRIP_WIDTH = 40
+
+/** 좌우 두 칸에서 칸 하나가 이보다 좁으면(px) 놓임 목록이 「차트 열이 좁습니다」를
+ *  답니다. 봉과 가격 눈금이 읽히는 끝입니다. 고르는 것은 막지 않습니다. */
+export const SIDE_PANE_MIN = 330
+
+/** 차트 카드 폭에서 차트 칸들이 쓰지 못하는 몫(px) — 카드 안쪽 여백입니다. */
+export const CHART_CARD_INSET = 40
+
+/** 그리기 띠가 켜졌을 때 차트 칸들 옆에서 가져가는 폭(px) — 띠와 그 옆 틈입니다. */
+export const DRAW_BAR_WIDTH = 44
+
+/** 두 칸 사이의 틈(px). `trade.css` 의 `.chart-panes` 와 같은 값입니다. */
+export const PANES_GAP = 10
+
+export const DEFAULT_SPLIT_LAYOUT: SplitLayout = {
+  ordersOpen: null,
+  ordersHeight: SPLIT_ORDERS_HEIGHT,
+  columns: { r1Width: SPLIT_BOOK_WIDTH, r2Width: FORM_ROOMY },
+}
+
+/** 저장된 두 칸 배치 값을 읽습니다. 모양이 틀린 칸은 그 칸만 기본값입니다. */
+export function normalizeSplitLayout(raw: unknown): SplitLayout {
+  const source = (raw && typeof raw === 'object' ? raw : {}) as Partial<SplitLayout>
+  const columns = (source.columns && typeof source.columns === 'object' ? source.columns : {}) as Partial<
+    SplitLayout['columns']
+  >
+  return {
+    ordersOpen: typeof source.ordersOpen === 'boolean' ? source.ordersOpen : null,
+    ordersHeight: clamp(source.ordersHeight, 0, MAX_HEIGHT, DEFAULT_SPLIT_LAYOUT.ordersHeight),
+    columns: {
+      r1Width: clamp(columns.r1Width, 0, MAX_WIDTH, DEFAULT_SPLIT_LAYOUT.columns.r1Width),
+      r2Width: clamp(columns.r2Width, 0, MAX_WIDTH, DEFAULT_SPLIT_LAYOUT.columns.r2Width),
+    },
+  }
+}
+
+/** 두 칸 배치에서 카드가 서는 모양. */
+export interface SplitArrangement {
+  /** 왼쪽 열 전체 높이를 쓰는 자리 — 차트가 선 자리입니다. */
+  left: SlotKey
+  /** 오른쪽 두 열 아래로 옮겨 가는 자리. 옮길 카드가 없으면 `null` 입니다. */
+  bottom: SlotKey | null
+  /** 두 칸 배치에서 열이 서는 차례. 넓은 열이 가운데 있으면 오른쪽 두 열이 서로
+   *  떨어져 그 아래에 두 열 폭 카드를 놓을 수 없으므로, 넓은 열을 왼쪽 끝으로
+   *  보냅니다. 저장된 열 순서는 바꾸지 않습니다. */
+  columnOrder: ColumnKey[]
+}
+
+/** 지금 배치로 두 칸 배치의 모양을 정합니다. 오른쪽 두 열이 다 비어 옮겨 갈 곳이
+ *  없으면 `null` 이고, 그때는 한 칸 배치 그대로 섭니다. */
+export function splitArrangement(layout: TradeLayout): SplitArrangement | null {
+  if (columnEmpty(layout, 'narrow') && columnEmpty(layout, 'far')) return null
+  const left: SlotKey = layout.slots.lb.includes('chart') ? 'lb' : 'lt'
+  const other: SlotKey = left === 'lt' ? 'lb' : 'lt'
+  const order = layout.columnOrder
+  const columnOrder: ColumnKey[] =
+    order[order.length - 1] === 'wide' ? [...order] : ['wide', ...order.filter((key) => key !== 'wide')]
+  return { left, bottom: isSlotEmpty(layout, other) ? null : other, columnOrder }
+}
+
+/** 두 칸 배치의 위쪽 격자 — 아래로 옮겨 간 자리를 비우고, 열 폭과 열 차례를 두
+ *  칸 배치의 것으로 바꾼 배치입니다. 폭·바닥을 재는 함수들을 한 칸 배치와 같이
+ *  쓰려고 만드는 값이라 저장하지 않습니다. */
+export function splitTopLayout(
+  layout: TradeLayout,
+  split: SplitLayout,
+  arrangement: SplitArrangement,
+): TradeLayout {
+  const slots = cloneSlots(layout.slots)
+  if (arrangement.bottom) slots[arrangement.bottom] = []
+  return {
+    ...layout,
+    slots,
+    r1Width: split.columns.r1Width,
+    r2Width: split.columns.r2Width,
+    columnOrder: [...arrangement.columnOrder],
+  }
 }

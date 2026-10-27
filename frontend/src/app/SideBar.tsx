@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { needsLeg } from '../data/instruments'
-import type { RecentItem } from '../lib/types'
+import type { OpenIntent, RecentItem } from '../lib/types'
 import { RECENT_EMPTY } from '../lib/labels'
 import { useStoredState } from '../lib/useStoredState'
+import { AccountPanel } from './AccountPanel'
 
 /* 오른쪽 접이식 사이드바.
  *
@@ -27,7 +28,11 @@ interface Item {
   label: string
 }
 
-const ITEMS: Item[] = [{ id: 'recent', glyph: '⏱', label: '최근 본' }]
+const ITEMS: Item[] = [
+  { id: 'recent', glyph: '⏱', label: '최근 본' },
+  /* 원화 기호이지만 해외 예탁금·포지션도 함께 담습니다. 뜻은 이름표가 마저 말합니다. */
+  { id: 'account', glyph: '₩', label: '계좌' },
+]
 
 interface Props {
   recent: RecentItem[]
@@ -36,14 +41,20 @@ interface Props {
   onOpen: (item: RecentItem) => void
   /** 그 종목을 최근 본에서 뺍니다. 종목을 열지 않습니다. */
   onRemove: (code: string) => void
+  /** 종목을 주문 화면에 엽니다. 계좌 패널의 포지션 줄이 청산하러 여는 길입니다. */
+  onOpenInstrument: (code: string, intent?: OpenIntent) => void
 }
 
-export function SideBar({ recent, current, onOpen, onRemove }: Props) {
+export function SideBar({ recent, current, onOpen, onRemove, onOpenInstrument }: Props) {
   /* 열려 있는 항목. null 이면 아이콘 열만 보입니다.
      앱을 껐다 켜도 남습니다 — 늘 열어 두고 쓰는 사람이 매번 다시 열지
      않아도 되고, 값이 아니라 「어떻게 볼지」라 낡지 않습니다. */
   const [open, setOpen] = useStoredState<string | null>('nh.sidebar.open', null)
   const active = ITEMS.find((item) => item.id === open) ?? null
+  /* 패널에 서 있는 항목. 닫는 동안에도 마지막에 연 것을 그대로 그립니다 — 폭이
+     줄어드는 사이에 다른 항목의 내용으로 바뀌면 닫히는 패널이 한 번 번쩍입니다. */
+  const [shown, setShown] = useState<Item>(active ?? ITEMS[0])
+  if (active !== null && active.id !== shown.id) setShown(active)
 
   /* 줄을 뺀 뒤 초점이 갈 곳. 뺀 줄의 단추가 사라지면 초점이 문서 맨 위로 떨어져,
      키보드로 이어서 빼던 사람이 자리를 잃습니다. 다음 줄 → 앞 줄 → 패널 머리
@@ -86,10 +97,13 @@ export function SideBar({ recent, current, onOpen, onRemove }: Props) {
       >
         <div className="sidebar-panel-inner" ref={panelRef} style={{ width: 'var(--panel-width)' }}>
           <div className="sidebar-panel-head" ref={headRef} tabIndex={-1}>
-            {active?.label ?? ITEMS[0].label}
+            {shown.label}
           </div>
 
-          {recent.length === 0 ? (
+          {shown.id === 'account' ? (
+            /* 열려 있을 때만 조회합니다. 닫는 동안에는 받아 둔 값을 그대로 둡니다. */
+            <AccountPanel open={active?.id === 'account'} onOpenInstrument={onOpenInstrument} />
+          ) : recent.length === 0 ? (
             <p className="recent-empty">{RECENT_EMPTY}</p>
           ) : (
             <div className="recent-list">
