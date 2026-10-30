@@ -227,6 +227,122 @@
   flex: 0 0 auto;
 }
 
+/* ── 기본 품목 알약 줄 ─────────────────────────────────── */
+
+/* 상세 칸 맨 위 한 줄. 알약이 많아 한 줄을 넘으면 다음 줄로 접힙니다 — 옆으로
+ * 밀면 끝의 「+ 품목 추가」가 안 보입니다. */
+.instr-pins {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.instr-pins-label {
+  margin-right: 4px;
+  font-size: 12px;
+  color: var(--text-label);
+}
+
+/* 알약 하나. 여는 단추와 빼기 단추가 한 몸으로 섭니다. */
+.instr-pin {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+.instr-pin-open {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  height: 100%;
+  padding: 0 4px 0 12px;
+  border-radius: 999px 0 0 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* 시장 표시. 이름보다 한 급 낮습니다 — 알약이 가리키는 것은 품목이고, 시장은 같은
+ * 이름이 두 시장에 있을 때 가르는 꼬리표입니다. */
+.instr-pin-market {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.instr-pin-remove {
+  height: 100%;
+  padding: 0 10px 0 6px;
+  border-radius: 0 999px 999px 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.instr-pin-open:hover,
+.instr-pin-remove:not(:disabled):hover {
+  background: var(--hover);
+}
+
+.instr-pin-remove:not(:disabled):hover {
+  color: var(--text);
+}
+
+/* 바꾼 것을 남길 수 없는 때(화면 상태를 받지 못함)의 빼기·더하기. 까닭은 단추에
+ * 마우스를 올리면 보입니다. */
+.instr-pin-remove:disabled,
+.instr-pin-add:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 지금 상세 칸에 선 품목의 알약. 초록은 「사용자가 고른 것」입니다. */
+.instr-pin[data-on] {
+  background: var(--brand-soft);
+}
+
+.instr-pin[data-on] .instr-pin-name {
+  color: var(--brand-text);
+}
+
+/* 더하기는 채우지 않은 알약입니다 — 채운 알약은 「담긴 품목」이라, 같은 모양이면
+ * 「+ 품목 추가」라는 품목이 담긴 것으로 읽힙니다. 고르는 판이 이 자리 아래에
+ * 뜹니다. */
+.instr-pin-adder {
+  position: relative;
+  display: inline-flex;
+}
+
+.instr-pin-add {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--divider);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.instr-pin-add:not(:disabled):hover {
+  background: var(--hover);
+}
+
+.instr-pin-adder .pick-popover {
+  left: 0;
+  top: calc(100% + 6px);
+}
+
+/* 저장 단추가 없는 자리라, 바꾼 것이 남는다는 말을 줄 끝에 작게 둡니다. */
+.instr-pins-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 .instr-head {
   display: flex;
   align-items: center;

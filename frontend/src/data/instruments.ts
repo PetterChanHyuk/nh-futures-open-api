@@ -852,15 +852,43 @@ export function defaultContractCode(
  * 못합니다. 종목 코드가 아니라 품목 코드라 만기가 넘어가도 낡지 않고, 어느
  * 월물인지는 아래에서 마스터가 정합니다. */
 const DEFAULT_PRODUCT: Record<Market, string> = {
-  domestic: 'KOSPI',
-  overseas: 'CL',
+  domestic: 'USD',
+  overseas: 'ES',
 }
 
-/** 그 시장을 비워 두고 열 때 세울 종목. 위 품목의 주력 월물 선물이고, 마스터에
- *  그 품목이 없으면 빈 문자열입니다 — 그때는 종목을 못 찾은 것과 같은 얼굴이
- *  섭니다. */
+/** 그 시장을 비워 두고 열 때 세울 종목. 위 품목의 **근월물** 선물 — 만기가 가장
+ *  가까운 월물입니다. 마스터에 그 품목이 없으면 빈 문자열입니다 — 그때는 종목을
+ *  못 찾은 것과 같은 얼굴이 섭니다.
+ *
+ *  **주력 표시가 아니라 근월입니다**(`defaultContractOf` 와 다릅니다). 해외 마스터의
+ *  주력 표시는 분기 교체 무렵 다음 월물로 먼저 넘어가, 아직 거래되는 근월 대신 다음
+ *  월물이 첫 화면에 섭니다. 처음 여는 화면은 지금 만기가 가장 가까운 것을 보여 줍니다.
+ *
+ *  **만기 당일도 그대로 그 월물입니다.** 그날도 주문할 수 있는 종목이라 첫 화면에서
+ *  빼지 않습니다 — 전략 실행의 「근월 자동」(`frontContractOf`)이 만기 당일을 건너뛰는
+ *  것과 다릅니다.
+ *
+ *  **만기가 가장 이른 월물을 고릅니다** — 실린 줄의 순서에 기대지 않습니다. 만기 월
+ *  (`expiry`)로 먼저 견주고, 같은 달이면 만기일(`expiryDate`)이 있을 때 그것으로
+ *  견줍니다. 그래도 같으면 앞 줄입니다.
+ *
+ *  종목 색인은 앱을 시작할 때 받으므로, 앱을 켜 둔 채 만기일이 지나면 다음에 다시
+ *  시작할 때까지 만기된 월물이 기본으로 설 수 있습니다. */
 export function defaultInstrumentCode(market: Market): string {
-  return defaultContractCode(market, DEFAULT_PRODUCT[market], 'futures') ?? ''
+  const product = productOf(market, DEFAULT_PRODUCT[market])
+  if (!product) return ''
+  let nearest: ContractRef | null = null
+  for (const item of contractsOf(product, 'futures')) {
+    if (nearest === null || earlierExpiry(item, nearest)) nearest = item
+  }
+  return nearest?.code ?? ''
+}
+
+/** 앞 월물이 뒤 월물보다 만기가 이른지. 같으면 거짓입니다(먼저 실린 쪽을 남깁니다). */
+function earlierExpiry(a: ContractRef, b: ContractRef): boolean {
+  if (a.expiry !== b.expiry) return a.expiry < b.expiry
+  if (a.expiryDate !== null && b.expiryDate !== null) return a.expiryDate < b.expiryDate
+  return false
 }
 
 /** 그 품목의 국내 옵션 하나. 만기가 가장 가까운 것 중 고른 쪽(콜/풋) 하나입니다.

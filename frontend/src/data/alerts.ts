@@ -21,7 +21,7 @@ import { useSyncExternalStore } from 'react'
 import { kstTradingDay } from '../lib/kst'
 import { moneyIn, toneOf } from '../lib/number'
 import { strategyTabShown } from './strategyTab'
-import { uiValue, useUiState } from './uiState'
+import { subscribeUi, uiState, uiValue, useUiState } from './uiState'
 import {
   eventKey,
   fillKey,
@@ -740,6 +740,38 @@ function noteResume(events: readonly VerifyEvent[]): void {
   startTicking()
 }
 
+/** 화면 상태 파일을 받기 전에 들어온 실행 목록·방송. 받은 뒤 들어온 차례대로 다시
+ *  흘려보냅니다.
+ *
+ *  **실행의 알림은 전략주문 탭을 보이는지에 따라 거르는데(`wanted`), 그 값은 화면 상태
+ *  파일에 있습니다.** 받기 전에 판정하면 켜 둔 사람의 알림도 끔으로 걸러지고, 본 것으로
+ *  남아(`seen`) 다시는 울리지 않습니다 — 밤새 끝난 실행의 알림처럼 앱을 켜자마자 오는
+ *  것이 이 사이에 몰립니다. 그래서 받을 때까지 판정 자체를 미룹니다. 받기에 실패해도
+ *  기다림은 끝나므로 그때 흘려보냅니다. 실행에 딸리지 않은 알림(`noteTradeNotice`)은
+ *  미루지 않습니다. */
+const waiting: [readonly VerifyRun[], readonly VerifyFill[], readonly VerifyEvent[], 'list' | 'broadcast'][] = []
+let stopWaiting: (() => void) | null = null
+
+/** 화면 상태를 받는 중이면 줄에 세우고 참을 돌려줍니다. */
+function holdUntilUiReady(
+  runs: readonly VerifyRun[],
+  fills: readonly VerifyFill[],
+  events: readonly VerifyEvent[],
+  from: 'list' | 'broadcast',
+): boolean {
+  if (uiState().status !== 'loading') return false
+  waiting.push([runs, fills, events, from])
+  stopWaiting ??= subscribeUi(() => {
+    if (uiState().status === 'loading') return
+    stopWaiting?.()
+    stopWaiting = null
+    /* 한 번 흘린 줄은 비웁니다. 같은 체결·이벤트가 여러 묶음에 겹쳐 있어도 열쇠로
+       가리므로(`seen`) 한 번만 울립니다. */
+    for (const one of waiting.splice(0)) noteRuns(...one)
+  })
+  return true
+}
+
 /** 실행 목록과 체결·이벤트가 들어오는 **한 자리**. 실행 목록 조회(`list`)는 줄만,
  *  허브 방송(`broadcast`)은 줄과 모든 실행의 최근 체결·이벤트를 싣습니다. */
 export function noteRuns(
@@ -748,6 +780,7 @@ export function noteRuns(
   events: readonly VerifyEvent[],
   from: 'list' | 'broadcast',
 ): void {
+  if (holdUntilUiReady(runs, fills, events, from)) return
   for (const run of runs) runsSeen.set(run.id, run)
   for (const run of runs) noteFeed(run)
   if (from === 'list') return

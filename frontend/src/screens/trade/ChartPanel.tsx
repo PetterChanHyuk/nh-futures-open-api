@@ -11,7 +11,7 @@ import {
 import { IndicatorMenu, IndicatorSettingsPopover, type IndicatorMenuItem } from './IndicatorSettings'
 import { ChartView } from './ChartView'
 import { SyncHub } from './SyncHub'
-import { DRAW_LABEL_CARD, NARROW_CARD, NARROW_CARD_WITH_DRAW, useNarrowCard } from './cardWidth'
+import { DRAW_LABEL_CARD, NARROW_CARD, NARROW_CARD_WITH_DRAW, TIGHT_DRAW_CARD, useNarrowCard } from './cardWidth'
 import type { BottomCap } from './chartLayout'
 import { PANES_GAP } from './tradeLayout'
 import type { LegendFold } from './ChartLegend'
@@ -151,6 +151,8 @@ export function ChartPanel({
   const [watchWidth, folded] = useNarrowCard(canToggleDraw ? NARROW_CARD_WITH_DRAW : NARROW_CARD)
   /* 「✎ 그리기」의 글자까지 들어가는 카드인지. 좁으면 그림만 남깁니다. */
   const [watchDrawLabel, drawIconOnly] = useNarrowCard(DRAW_LABEL_CARD)
+  /* 「✎」까지 선 도구 줄이 단추 사이를 줄여야 들어가는 카드인지. */
+  const [watchControls, tightControls] = useNarrowCard(TIGHT_DRAW_CARD)
   const [menuOpen, setMenuOpen] = useState(false)
   useEffect(() => {
     if (!folded) setMenuOpen(false)
@@ -333,7 +335,11 @@ export function ChartPanel({
 
   return (
     <div className={`chart-panel${expanded ? ' is-expanded' : ''}`} ref={watchWidth}>
-      <div className="chart-controls">
+      <div
+        className="chart-controls"
+        ref={watchControls}
+        data-tight={canToggleDraw && tightControls ? 'true' : undefined}
+      >
         {/* 봉 종류는 칸마다 따로입니다. 이 토글은 도구 줄이 다루는 칸(주문 대상)의
             것을 보여 주고 그 칸만 바꿉니다. */}
         <div className="seg" role="group" aria-label="기간">
@@ -469,6 +475,14 @@ function EmptySlot({ near, onPick }: { near: string; onPick?: (item: InstrumentR
   const [open, setOpen] = useState(false)
   return (
     <div className="chart-box is-idle is-empty">
+      {/* 빈 칸 가운데의 차례. 배지를 누를 수 있을 때만 적습니다 — 누를 수 없는
+          배지를 누르라고 적으면 할 수 없는 일을 시키는 셈입니다. */}
+      {onPick && (
+        <p className="chart-pending-note is-two">
+          <span className="chart-pending-lead">위 배지를 눌러</span>
+          <span>이 칸에 볼 종목을 고르세요</span>
+        </p>
+      )}
       {onPick ? (
         <button
           type="button"

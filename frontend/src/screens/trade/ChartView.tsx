@@ -728,11 +728,19 @@ export function ChartView({
 
       {/* 옵션인데 행사가(또는 콜/풋)를 아직 안 고른 칸. 아직 종목이 아니라 조회를
           내지 않으므로(`data/quotes.ts` 의 `askable`) 그릴 봉이 없습니다. 빈 격자를
-          세우는 대신 「종목을 고르세요」 칸과 같은 꼴로 배지와 안내 한 줄만 둡니다.
-          이 칸은 주문 대상이 될 수 있고, 대상이 되면 헤더에서 남은 축을 고릅니다. */}
-      {pendingLeg && (
-        <p className="chart-pending-note">{PENDING_TEXT[quote.pendingAxis ?? 'strike'].ask}</p>
-      )}
+          세우는 대신 「종목을 고르세요」 칸과 같은 꼴로 배지와 안내만 둡니다.
+          이 칸은 주문 대상이 될 수 있고, 대상이 되면 헤더에서 남은 축을 고릅니다.
+          **두 칸에서 대상이 아닌 칸**은 그 차례를 두 줄로 적습니다 — 헤더는 대상 칸의
+          것이라, 「행사가를 고르세요」만 서면 어디서 고르는지 알 수 없습니다. */}
+      {pendingLeg &&
+        (split && !active ? (
+          <p className="chart-pending-note is-two">
+            <span className="chart-pending-lead">이 칸을 누르고</span>
+            <span>헤더에서 {PENDING_TEXT[quote.pendingAxis ?? 'strike'].ask}</span>
+          </p>
+        ) : (
+          <p className="chart-pending-note">{PENDING_TEXT[quote.pendingAxis ?? 'strike'].ask}</p>
+        ))}
 
       {/* 종목 배지. 두 칸일 때 어느 칸이 어느 종목인지는 이 배지가 말하고,
           ▾ 로 이 칸의 종목만 바꿉니다. 종목을 바꿀 수 없는 차트(전략 검증의

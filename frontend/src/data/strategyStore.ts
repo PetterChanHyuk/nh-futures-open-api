@@ -15,6 +15,7 @@ import {
   type RunMarket,
 } from './strategyRuns'
 import { noteRefill, noteRuns } from './alerts'
+import { noteRunsForTab } from './strategyTab'
 import type { Environment } from './environment'
 import type {
   RunMode,
@@ -776,6 +777,9 @@ export async function loadRuns(): Promise<void> {
     const body = await answer.json()
     const took = tookRuns(body)
     const runs = took.runs ?? []
+    /* 전략주문 탭을 보일지 정하지 않은 사람에게는 끝나지 않은 실행이 탭을 켭니다.
+       알림보다 먼저 알려, 그 실행의 알림이 꺼진 탭에 막히지 않게 합니다. */
+    noteRunsForTab(runs)
     /* 알림은 이 줄들의 시세 상태도 봅니다(끊김·이어짐). */
     noteRuns(runs, [], [], 'list')
     /* 실행 파일의 상태는 **이 조회에만** 실려 옵니다 — 허브 방송에는 없습니다. */
@@ -1063,6 +1067,8 @@ export function applyStrategyBroadcast(
   events: VerifyEvent[],
   openOrders: VerifyOrder[],
 ): void {
+  /* 목록 조회와 같은 까닭으로 알림보다 먼저 알립니다. */
+  noteRunsForTab(runs)
   /* 알림의 원천 — 모든 실행의 최근 체결·이벤트가 오는 길은 이 방송뿐입니다. */
   noteRuns(runs, fills, events, 'broadcast')
   const pickedId = verifyPickOf(runs)

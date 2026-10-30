@@ -35,6 +35,7 @@
     nh.trade.splitLayout   차트 두 칸일 때의 화면 배치
     nh.alerts              전략 실행 알림 설정
     nh.nav.strategy        상단 전략주문 탭을 보일지
+    nh.instruments.defaults  종목 화면의 기본 품목 알약
 
 브라우저에 남는 것 — 그 화면, 그 창에서만 뜻이 있는 것
 
@@ -42,7 +43,6 @@
     nh.recent                    최근 본 종목
     nh.sidebar.open              사이드바 펼침
     nh.instruments.navWidth      종목 화면 목록 폭
-    nh.instruments.openGroups    종목 화면 펼친 무리
     nh.trade.chartBottomOpen     차트 아래 칸 펼침
     nh.trade.chainBottomOpen     옵션 아래 칸 펼침
 
@@ -79,6 +79,7 @@ STORED_KEYS = (
     "nh.trade.splitLayout",
     "nh.alerts",
     "nh.nav.strategy",
+    "nh.instruments.defaults",
 )
 
 #: 브라우저에 남기는 항목. 여기서 쓰지는 않고, 무엇을 안 옮겼는지 적어 둡니다.
@@ -87,7 +88,6 @@ DEVICE_KEYS = (
     "nh.recent",
     "nh.sidebar.open",
     "nh.instruments.navWidth",
-    "nh.instruments.openGroups",
     "nh.trade.chartBottomOpen",
     "nh.trade.chainBottomOpen",
 )

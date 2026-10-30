@@ -22,12 +22,14 @@ import './HomeCards.css'
 import './HomeTiles.css'
 import {
   latest,
-  LeadTile,
+  OpenPanel,
   QuoteRow,
   StaleTile,
   RemoveButton,
+  GripDots,
   type Slot,
 } from './HomeTiles'
+import { useWatchDrag } from './useWatchDrag'
 import { AccountCardBody, OrdersCard, CardSkeleton, type ExpiryRow } from './HomeCards'
 import { renderHomeHours } from './HomeHours'
 
@@ -134,76 +136,90 @@ export function HomeScreen({
   )
   useWishes('home-watch', wishes)
 
-  /* 어느 빈 칸에서 고르는 중인지. null 이면 고르는 중이 아닙니다. */
-  const [picking, setPicking] = useState<number | null>(null)
+  /* 담을 종목을 고르는 중인지. */
+  const [picking, setPicking] = useState(false)
 
-  /* 칸은 늘 여섯입니다. 뺀 자리는 사라지지 않고 빈 칸으로 남습니다.
+  /* 칸은 늘 여섯입니다. **담긴 종목이 앞에서부터 차례로 서고 빈 칸은 늘 뒤입니다** —
+     빈 칸이 목록 가운데 끼면 순서를 읽다가 끊기고, 담을 자리는 어디든 같습니다.
      색인이 못 푸는 코드는 **낡은 칸**으로 섭니다 — 무엇을 담아 뒀는지(코드)와
      왜 값이 없는지가 그 자리에 서고, 빼기 단추만 살아 있습니다. */
+  const filled = shown.filter((code) => code !== '').slice(0, WATCH_SLOTS)
   const slots: Slot[] = Array.from({ length: WATCH_SLOTS }, (_, i) => {
-    const code = shown[i]
+    const code = filled[i]
     if (!code) return null
     const tile = tileOf(code)
     if (tile) return { kind: 'tile', tile }
     return { kind: 'stale', code }
   })
-  const lead = slots[0]
-  const rest = slots.slice(1)
+  const valued = slots.flatMap((slot) => (slot?.kind === 'tile' ? [slot.tile] : []))
+  /* 펼친 줄. **한 줄은 늘 펼쳐져 있고**, 처음에는 첫 종목입니다. 다른 줄을 누르면
+     그 줄이 펼쳐지고 앞 줄은 접힙니다. 펼친 줄을 다시 눌러도 그대로입니다.
+     종목 코드로 기억합니다 — 칸 번호로 기억하면 앞 칸을 빼거나 담을 때 펼친 것이
+     다른 종목으로 옮겨 갑니다. 고른 종목이 목록에서 빠졌으면 첫 종목으로
+     돌아갑니다.
+     **저장하지 않습니다.** 홈에 다시 오면 첫 종목이 펼쳐져 있습니다. 누름은 순서도
+     바꾸지 않습니다 — 순서는 사용자가 정한 그대로 둡니다. */
+  const [picked, setPicked] = useState('')
+  const openCode = valued.some((tile) => tile.code === picked) ? picked : (valued[0]?.code ?? '')
   /* 목록 열 이름. 국내 야간의 등락은 **그 거래일의 주간 정산가**에서 잽니다. 열
      이름은 줄 모두에 한 번 서므로, 값이 서는 줄이 **전부** 국내 야간일 때만
      「정산가대비」라 적습니다 — 해외나 주간이 한 줄이라도 섞이면 그 줄에는 틀린
      말이 되어 「전일대비」 그대로 둡니다. 빈 칸과 색인에 없는 칸은 등락을 안
      적으므로 셈에 안 넣습니다. 세션은 서버 답이고, 바뀌면 위 구독이 다시
      그립니다. */
-  const valued = rest.flatMap((slot) => (slot?.kind === 'tile' ? [slot.tile] : []))
   const settleBased =
     valued.length > 0 &&
     valued.every((tile) => tile.market === 'domestic' && domesticContextOf(tile.code) === 'domestic-night')
 
-  /* 담기·빼기·맞바꾸기는 화면에 보이는 목록에서 시작합니다(기본 목록이 서 있을 때도).
-     저장 목록에서 시작하면 기본 목록이 서 있을 때 한 칸만 바꿔도 나머지가 빈 칸으로 저장됩니다. */
-  const add = (slot: number, code: string) => {
-    const next = [...shown]
-    while (next.length < WATCH_SLOTS) next.push('')
-    next[slot] = code
-    setWatch(next)
-    setPicking(null)
+  /* 담기·빼기는 화면에 보이는 목록에서 시작합니다(기본 목록이 서 있을 때도).
+     저장 목록에서 시작하면 기본 목록이 서 있을 때 한 칸만 바꿔도 나머지가 빈 칸으로 저장됩니다.
+     저장은 늘 여섯 칸이고, 빈 칸은 뒤에 채웁니다. */
+  const padded = (codes: string[]) => [...codes, ...Array<string>(WATCH_SLOTS - codes.length).fill('')]
+
+  /* 담은 종목은 담긴 것들의 맨 뒤에 섭니다. */
+  const add = (code: string) => {
+    setWatch(padded([...filled, code].slice(0, WATCH_SLOTS)))
+    setPicking(false)
   }
 
-  /* 뺀 자리는 그대로 빈 칸입니다. 뒤를 당겨 채우면 다른 종목이 자리를 옮겨,
-     자기가 안 건드린 칸이 움직인 것으로 보입니다. */
+  /* 뺀 종목의 뒤 줄들은 한 칸씩 올라옵니다 — 빈 칸은 늘 뒤에 있습니다. */
   const remove = (slot: number) => {
-    const next = [...shown]
-    while (next.length < WATCH_SLOTS) next.push('')
-    next[slot] = ''
-    setWatch(next)
+    setWatch(padded(filled.filter((_, index) => index !== slot)))
   }
 
-  /* 방금 맞바꾼 줄. 들어오는 쪽만 잠깐 움직입니다 — 나가는 것까지 흐리면
-     같은 자리에서 두 글자가 겹쳐 그동안 둘 다 안 읽힙니다. */
-  const [swapped, setSwapped] = useState<number | null>(null)
-
-  /* 작은 줄을 누르면 큰 타일과 자리를 바꿉니다. 큰 타일로 올라온 뒤에 다시
-     누르면 그때 주문 화면으로 갑니다 — 「크게 보기」와 「주문하러 가기」는
-     다른 일이라, 한 번의 누름에 둘을 담지 않습니다.
-     순서는 그대로 저장되므로 다시 열어도 고른 대로 있습니다. */
-  const swapToLead = (slot: number) => {
-    const next = [...shown]
-    while (next.length < WATCH_SLOTS) next.push('')
-    const head = next[0]
-    next[0] = next[slot]
-    next[slot] = head
-    setWatch(next)
-    setSwapped(slot)
-    window.setTimeout(() => setSwapped(null), 200)
+  /* 순서 바꾸기. 한 줄을 빼서 다른 자리에 꽂고 한 번 저장합니다. 펼친 줄은 종목
+     코드로 기억하므로 옮겨도 그 종목이 펼쳐진 채입니다. */
+  const reorder = (from: number, to: number) => {
+    /* 아직 아무것도 안 눌러 「첫 종목」이 펼쳐져 있던 경우에도 그 종목을 붙잡아
+       둡니다 — 안 그러면 첫 줄을 옮기는 순간 새로 첫 줄이 된 종목이 펼쳐집니다. */
+    if (openCode) setPicked(openCode)
+    const next = [...filled]
+    const [code] = next.splice(from, 1)
+    next.splice(to, 0, code)
+    setWatch(padded(next))
   }
+  const { tableRef, drag, gripProps, rowProps, rowKeyProps } = useWatchDrag(filled, reorder)
+  /* 손잡이. 담긴 줄(값이 서는 줄과 목록에 없는 줄)마다 하나이고, 빈 칸에는 없습니다.
+     줄 몸통을 잡아도 끌리므로 손잡이는 「옮길 수 있다」는 표시를 겸합니다. */
+  const grip = (index: number, name: string) => (
+    <button
+      type="button"
+      className="home-grip"
+      aria-label={`${name} 순서 바꾸기 — 끌거나 Alt+위·아래 화살표`}
+      title="끌어서 순서 바꾸기"
+      {...gripProps(index)}
+    >
+      <GripDots />
+    </button>
+  )
+
   /* 계좌·주문 카드는 `useDepositOnce`·`useOrderLists` 가 부릅니다. 인증 정보가 없는
      시장은 부르지 않고, 그 자리가 「계좌를 아직 조회하지 않았습니다」·「주문 내역을
      아직 조회하지 않았습니다」로 제 상태를 말합니다. */
   /* 관심종목 칸이 부르는 종목. 마스터에 없는 코드(낡은 칸)는 부를 길이 없어 뺍니다. */
   const watched = shown.filter((code) => code !== '' && resolve(code) !== null)
-  /* 큰 타일의 곡선은 분봉 한 건입니다. */
-  const leadCode = lead?.kind === 'tile' ? lead.tile.code : ''
+  /* 펼친 줄의 곡선은 분봉 한 건입니다. */
+  const leadCode = openCode
 
   /* 타일들의 상태를 한 줄로 모아 봅니다. 타일마다 제 값을 구독하지만, 위쪽
      단추와 「갱신」은 **모두를 합쳐** 말해야 하기 때문입니다. */
@@ -231,7 +247,7 @@ export function HomeScreen({
 
   /* 다시 받습니다. **이미 받아 둔 값이 있어도 다시 부릅니다** — 사용자가 이
      단추를 누르는 것은 「지금 값이 궁금하다」이고, 그때 옛 값을 그대로 두면
-     누른 보람이 없습니다. 현재가는 칸마다 한 건, 곡선은 큰 타일 한 건입니다 —
+     누른 보람이 없습니다. 현재가는 칸마다 한 건, 곡선은 펼친 줄 한 건입니다 —
      여섯 칸이 다 차도 일곱 건이라 시세 예산(초당 열) 안입니다.
      **받는 동안 값은 그대로 섭니다** — 갱신은 골격이 안 바뀌는 일이라 뼈대로
      되돌리지 않습니다. 같은 종목이 이미 받는 중이면 겹쳐 내지 않습니다. */
@@ -376,8 +392,8 @@ export function HomeScreen({
         {row}
       </div>
 
-      {/* 여섯 칸. 첫 칸이 큰 타일이고 나머지 다섯이 목록입니다.
-          빈 칸은 「+ 눌러서 추가」로 남습니다 — 칸을 없애면 여섯이라는 상한이
+      {/* 여섯 칸이 한 목록입니다. 한 줄이 펼쳐져 곡선을 보이고 나머지는 접힌
+          줄입니다. 빈 칸은 「+ 눌러서 추가」로 남습니다 — 칸을 없애면 여섯이라는 상한이
           화면에서 사라지고, 다시 넣을 자리도 없어집니다. */}
       <section className="card home-quotes" aria-label="주요 시세">
         {/* **받는 중에는 담을 자리를 안 엽니다.** 「+」를 세우면 「비어 있으니
@@ -402,39 +418,10 @@ export function HomeScreen({
         {staleCount > 0 && (
           <p className="list-stale">{staleCount}종목은 다시 받지 못해 이전 값입니다</p>
         )}
-        {lead?.kind === 'tile' ? (
-          <div className="home-tile-slot">
-            <button
-              type="button"
-              className={`home-tile home-tile-lead${swapped !== null ? ' home-swap-up' : ''}`}
-              aria-label={`${lead.tile.name} 주문으로`}
-              onClick={() => onOpenInstrument(lead.tile.code)}
-            >
-              <LeadTile tile={lead.tile} />
-            </button>
-            <RemoveButton name={lead.tile.name} onRemove={() => remove(0)} />
-          </div>
-        ) : lead?.kind === 'stale' ? (
-          <div className="home-tile-slot">
-            {/* 마스터에 돌아오면 다시 눌리는 자리라 없애지 않고 **비활성**입니다 —
-                까닭은 그 안의 한 마디가 말합니다. */}
-            <button type="button" className="home-tile home-tile-lead" disabled>
-              <StaleTile code={lead.code} lead />
-            </button>
-            <RemoveButton name={lead.code} onRemove={() => remove(0)} />
-          </div>
-        ) : (
-          <button type="button" className="home-tile home-slot-empty" onClick={() => setPicking(0)}>
-            + 눌러서 추가
-          </button>
-        )}
-
-        {/* 열 이름은 목록 바로 위에 둡니다. 큰 타일은 이름·값·등락을 세로로
-            쌓은 다른 배치라 이 열들이 없습니다 — 그 위에 두면 있지도 않은
-            열을 가리키게 됩니다. */}
-        {/* 머리글과 다섯 줄이 한 격자입니다. 줄마다 격자를 따로 잡으면 종목 열이
-            줄마다 제 이름 폭이 되어 값 열이 줄 사이에서 어긋납니다. */}
-        <div className="quote-table">
+        {/* 머리글과 여섯 줄이 한 격자입니다. 줄마다 격자를 따로 잡으면 종목 열이
+            줄마다 제 이름 폭이 되어 값 열이 줄 사이에서 어긋납니다. 머리글은
+            목록 맨 위에 한 번 섭니다 — 펼친 줄도 같은 열에 값을 둡니다. */}
+        <div className="quote-table" ref={tableRef} data-dragging={drag ? 'true' : undefined}>
         <div className="quote-head">
           <span>종목</span>
           <span>현재가</span>
@@ -447,38 +434,58 @@ export function HomeScreen({
         </div>
 
         <ul className="home-quote-list">
-          {rest.map((item, index) => (
-            <li key={item ? (item.kind === 'tile' ? item.tile.code : item.code) : `empty-${index}`}>
+          {slots.map((item, index) => {
+            const open = item?.kind === 'tile' && item.tile.code === openCode
+            return (
+            <li
+              key={item ? (item.kind === 'tile' ? item.tile.code : item.code) : `empty-${index}`}
+              data-lifted={drag?.from === index ? 'true' : undefined}
+              {...(item ? rowProps(index) : {})}
+            >
               {item?.kind === 'tile' ? (
                 <>
+                  {grip(index, item.tile.name)}
+                  {/* 접힌 줄을 누르면 그 줄이 펼쳐집니다. 펼친 줄을 누르면 그 종목의
+                      주문 화면으로 갑니다 — 펼쳐서 흐름을 본 다음 할 일이 주문입니다.
+                      접는 길은 다른 줄을 펼치는 것뿐입니다. */}
                   <button
                     type="button"
-                    className={`quote-row${swapped === index + 1 ? ' home-swap-down' : ''}`}
-                    aria-label={`${item.tile.name} 크게 보기`}
-                    onClick={() => swapToLead(index + 1)}
+                    className="quote-row"
+                    aria-label={open ? `${item.tile.name} 주문 화면으로` : `${item.tile.name} 펼쳐 보기`}
+                    aria-expanded={open}
+                    aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+                    {...rowKeyProps(index)}
+                    onClick={() => (open ? onOpenInstrument(item.tile.code) : setPicked(item.tile.code))}
                   >
-                    <QuoteRow tile={item.tile} />
+                    <QuoteRow tile={item.tile} open={open} />
                   </button>
-                  <RemoveButton name={item.tile.name} onRemove={() => remove(index + 1)} />
+                  {/* 펼친 줄 아래 판. 판을 눌러도 그 종목의 주문 화면으로 갑니다. */}
+                  {open && <OpenPanel tile={item.tile} onOrder={() => onOpenInstrument(item.tile.code)} />}
+                  <RemoveButton name={item.tile.name} onRemove={() => remove(index)} />
                 </>
               ) : item?.kind === 'stale' ? (
                 <>
+                  {/* 마스터에 돌아오면 다시 눌리는 자리라 없애지 않고 **비활성**입니다 —
+                      까닭은 그 안의 한 마디가 말합니다. 펼치지 않습니다. 순서는
+                      손잡이로 바꿀 수 있습니다. */}
+                  {grip(index, item.code)}
                   <button type="button" className="quote-row" disabled>
-                    <StaleTile code={item.code} lead={false} />
+                    <StaleTile code={item.code} />
                   </button>
-                  <RemoveButton name={item.code} onRemove={() => remove(index + 1)} />
+                  <RemoveButton name={item.code} onRemove={() => remove(index)} />
                 </>
               ) : (
                 <button
                   type="button"
                   className="quote-row home-slot-empty"
-                  onClick={() => setPicking(index + 1)}
+                  onClick={() => setPicking(true)}
                 >
                   + 눌러서 추가
                 </button>
               )}
             </li>
-          ))}
+            )
+          })}
         </ul>
         </div>
           </>
@@ -486,12 +493,12 @@ export function HomeScreen({
 
         {/* 담을 종목은 마스터 전체에서 고릅니다 — 찾는 규칙은 상단 검색과
             같고, 담기는 것은 시세를 부를 수 있는 계약 하나입니다. */}
-        {picking !== null && (
+        {picking && (
           <WatchPicker
-            taken={shown.filter(Boolean)}
+            taken={filled}
             recent={recent}
-            onPick={(code) => add(picking, code)}
-            onClose={() => setPicking(null)}
+            onPick={add}
+            onClose={() => setPicking(false)}
           />
         )}
       </section>

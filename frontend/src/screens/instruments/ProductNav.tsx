@@ -1,16 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Product, ProductKind } from '../../lib/types'
 import { kindsOf, searchTextOf } from '../../data/instruments'
-import { useStoredState } from '../../lib/useStoredState'
 
 /* 좌측 품목 내비 — 거래소가 최상위, 상품이 그 아래입니다.
  *
  * 해외 마스터가 거래소별 파일(cme · opra · 기타)로 오므로 그 축이 화면에도
  * 남습니다.
  *
- * **줄은 다 서고 그 아래가 하나만 펼쳐집니다.** 거래소는 무엇이 있는지 다
+ * **줄은 다 서고 그 아래는 많아야 하나가 펼쳐집니다.** 거래소는 무엇이 있는지 다
  * 보여야 하고(「이 거래소에는 없다」를 고르고 나서 알 수 있습니다), 상품군은 한
- * 번에 하나만 봅니다. **거래소끼리 견주는 길은 없습니다 — 옮겨 가며 봅니다.**
+ * 번에 한 거래소의 것만 봅니다. **거래소끼리 견주는 길은 없습니다 — 옮겨 가며
+ * 봅니다.** 펼친 거래소 줄을 다시 누르면 접힙니다.
  *
  * **국내에는 거래소 줄이 아예 없습니다.** 국내 마스터에 거래소 칸이 없어서,
  * 있는데 하나인 것이 아니라 축이 없는 것입니다. 이름 없는 줄을 세우면 고를 것도
@@ -29,6 +29,10 @@ import { useStoredState } from '../../lib/useStoredState'
  * 상품군 이름이 한 화면에 다 서서 「어떤 것들이 있나」가 먼저 보입니다.
  * 머리마다 품목 수를 답니다 — 접힌 것 안에 몇 개가 있는지 열어 보지 않고
  * 알 수 있어야 여는 값이 생깁니다.
+ *
+ * **이 화면을 열 때마다 거래소와 상품군이 모두 접혀 있습니다.** 펼친 것은 저장하지
+ * 않고, 다른 화면에 갔다 오면 처음 모습으로 돌아옵니다. 찾기로 품목을 고르면 그
+ * 품목의 거래소와 상품군을 펼쳐, 고른 것이 목록 어디에 있는지 보이게 합니다.
  */
 
 /** 이 폭 아래에서는 안내 문구를 줄입니다. 잘린 문장은 안 적은 것만 못합니다. */
@@ -43,19 +47,21 @@ interface Props {
   /** 그 시장의 품목 전부. 거래소 목록은 종류와 무관하게 다 서야, 「이 거래소에
    *  선물이 없다」를 고르고 나서 알 수 있습니다. */
   products: Product[]
-  /** 어느 시장인가. 펼쳐 둔 상품군을 시장마다 따로 기억합니다. */
+  /** 어느 시장인가. 펼쳐 둔 상품군을 시장마다 따로 둡니다(이 화면에 있는 동안만). */
   market: 'domestic' | 'overseas'
   /** 지금 보고 있는 종류. 거래소 아래 항목만 이걸로 거릅니다.
    *  **`null` 이면 안 거릅니다** — 품목마다 종류가 하나뿐인 시장에서는 종류가
    *  고르는 축이 아니라 품목의 꼬리표라, 걸러 내면 목록의 대부분이 사라집니다. */
   kind: ProductKind | null
   selected: string
-  /** 열려 있는 거래소. 국내처럼 하나뿐이면 늘 그것입니다. */
-  exchange: string
+  /** 펼친 거래소. `null` 이면 다 접혀 있습니다. 국내처럼 거래소 축이 없거나 하나뿐인
+   *  시장에서는 늘 펼쳐져 있습니다. */
+  exchange: string | null
   /** 사용자가 경계선을 끌어 정한 폭 */
   width: number
   onSelect: (product: Product) => void
-  onExchangeChange: (exchange: string) => void
+  /** 펼칠 거래소를 바꿉니다. `null` 이면 다 접습니다. **품목은 바꾸지 않습니다.** */
+  onExchangeChange: (exchange: string | null) => void
 }
 
 export function ProductNav({
@@ -70,14 +76,9 @@ export function ProductNav({
 }: Props) {
   const [query, setQuery] = useState('')
   /* 펼쳐 둔 상품군. **시장마다 따로**입니다 — 이름이 겹치는 상품군이 있어
-     한 목록에 섞으면 국내에서 편 것이 해외에서도 펴집니다. */
-  const [openGroups, setOpenGroups] = useStoredState<Record<string, string[]>>(
-    'nh.instruments.openGroups',
-    {},
-  )
-  /* 저장된 것이 **없는 것**과 **비어 있는 것**은 다릅니다 — 없으면 아직 아무것도
-     안 건드린 것이라 기본값을 쓰고, 빈 목록이면 사용자가 다 접은 것입니다. */
-  const stored = openGroups[market]
+     한 목록에 섞으면 국내에서 편 것이 해외에서도 펴집니다. 처음에는 다 접혀 있고,
+     저장하지 않습니다. */
+  const [openGroups, setOpenGroups] = useState<Record<string, string[]>>({})
 
   /* 시장을 바꾸면 찾던 말을 지웁니다. 남겨 두면 목록이 비어 있는 채로 열리고,
      그게 「이 시장에는 품목이 없다」로 읽힙니다. */
@@ -126,7 +127,10 @@ export function ProductNav({
   /* 거래소 축이 있는 시장인가. 이름이 하나도 없으면 마스터가 그 칸을 안 준
      것이라, 줄을 세우지 않고 상품군을 최상위로 둡니다. */
   const hasExchange = exchanges.some((item) => item.name !== '')
-  const active = exchanges.find((item) => item.name === exchange) ?? exchanges[0]
+  /* 펼친 거래소. 거래소 축이 없는 시장에서는 그 하나가 늘 펼쳐져 있습니다. */
+  const active = hasExchange
+    ? (exchanges.find((item) => item.name === exchange) ?? null)
+    : exchanges[0]
 
   /* 찾기 결과는 시장 전체입니다. 거래소·상품군 머리를 세우지 않고 한 줄로
      펴되, 어디에 있는 품목인지를 이름 아래 작게 답니다 — 결과를 고르면
@@ -138,25 +142,7 @@ export function ProductNav({
           .filter((product) => searchTextOf(product).includes(term))
           .sort((a, b) => byName.compare(a.name, b.name))
 
-  const pick = (product: Product) => {
-    setQuery('')
-    onSelect(product)
-  }
-
-  /* 고른 품목이 든 상품군.
-   *
-   * **다른 품목을 고르는 순간 그 상품군을 폅니다** — 고른 것이 목록에 안 보이면
-   * 화면이 무엇을 보여주고 있는지와 목록이 어긋납니다. 다만 **펴 두고 잠그지는
-   * 않습니다.** 첫 화면에 선 품목이 이백 개짜리 상품군에 들어 있으면, 사용자가
-   * 가장 먼저 닫고 싶어 하는 것이 바로 그 상품군입니다. 접은 뒤 고른 품목이
-   * 목록에서 안 보이는 것은 사용자가 그렇게 한 것입니다.
-   *
-   */
-  const picked = products.find((item) => item.code === selected)?.group
-  /* 처음 여는 화면에서는 **한 상품군이 펴져 있습니다** — 고른 품목이 든 것,
-     고른 것이 없으면 첫 상품군. 다 접힌 채로 열면 첫 화면이 머리 몇 줄뿐이라,
-     무엇을 고르는 자리인지 눌러 봐야 알게 됩니다. */
-  const opened = stored ?? [picked ?? active?.groups[0]?.name ?? '']
+  const opened = openGroups[market] ?? []
   const isOpen = (name: string) => opened.includes(name)
 
   const setOpen = (name: string, open: boolean) => {
@@ -166,16 +152,15 @@ export function ProductNav({
     setOpenGroups({ ...openGroups, [market]: next })
   }
 
-  /* **고를 때마다가 아니라 바뀔 때만** 폅니다. 화면이 다시 그려질 때마다 폈다면
-     사용자가 접어 둔 것이 앱을 켤 때마다 도로 펴집니다 — 접어 둔 것은 값이
-     아니라 「어떻게 볼지」라 그대로 남아야 합니다. */
-  const previous = useRef(selected)
-  useEffect(() => {
-    if (previous.current === selected) return
-    previous.current = selected
-    if (picked !== undefined && !opened.includes(picked)) setOpen(picked, true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected])
+  /* 찾기로 고른 품목은 그 거래소와 상품군을 펼칩니다 — 찾기를 지우고 목록으로
+     돌아왔을 때 고른 것이 접힌 상품군 안에 숨어 있으면, 화면이 보여주는 것과
+     목록이 어긋납니다. 목록에서 직접 고른 것은 이미 펼친 상품군 안에 있습니다. */
+  const pick = (product: Product) => {
+    setQuery('')
+    if (!opened.includes(product.group)) setOpen(product.group, true)
+    if (hasExchange) onExchangeChange(product.exchange)
+    onSelect(product)
+  }
 
   /* 한 거래소 아래에 서는 상품군 목록. 거래소 축이 없는 시장에서는 이것만
      섭니다 — 두 시장이 같은 조각을 씁니다. */
@@ -274,7 +259,8 @@ export function ProductNav({
                       type="button"
                       className="nav-exchange"
                       aria-expanded={ex.name === active?.name}
-                      onClick={() => onExchangeChange(ex.name)}
+                      /* 펼친 줄을 다시 누르면 접습니다. */
+                      onClick={() => onExchangeChange(ex.name === active?.name ? null : ex.name)}
                     >
                       <span className="nav-caret" aria-hidden="true">
                         {ex.name === active?.name ? '▾' : '▸'}

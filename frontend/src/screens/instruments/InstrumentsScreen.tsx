@@ -6,6 +6,7 @@ import { kindsOf, productsOf } from '../../data/instruments'
 import { refreshMaster, type MasterState } from '../../data/master'
 import { ProductNav } from './ProductNav'
 import { CatalogList } from './CatalogList'
+import { DefaultProducts, productOfPin, useDefaultProducts, type ProductPin } from './DefaultProducts'
 import './instruments.css'
 
 /* 종목 — 무엇이 있는지 고르는 카탈로그.
@@ -58,9 +59,17 @@ export function InstrumentsScreen({
     max: 380,
   })
 
-  const all = productsOf(overseas ? 'overseas' : 'domestic')
+  const market = overseas ? 'overseas' : 'domestic'
+  const all = productsOf(market)
 
-  const product = all.find((item) => item.code === productCode) ?? all[0]
+  /* 기본 품목 알약. 처음 들어와 아직 고른 품목이 없으면 **이 시장의 첫 알약**이
+     상세 칸에 섭니다 — 목록 맨 앞 품목은 시장의 아무 품목이라 처음 볼 까닭이
+     없습니다. 이 시장의 알약이 없으면 지금처럼 목록 맨 앞 품목입니다. 이미 고른
+     품목이 있으면 그대로입니다. */
+  const { pins, store: storePins, editable: pinsEditable } = useDefaultProducts()
+  const firstPin = pins.find((pin) => pin.market === market)
+  const pinned = productCode === null && firstPin ? productOfPin(firstPin) : null
+  const product = all.find((item) => item.code === productCode) ?? pinned ?? all[0]
 
   /* **종류를 고르는 축은 시장마다 다릅니다.**
    *
@@ -81,9 +90,12 @@ export function InstrumentsScreen({
       ? pickedKind
       : (available[0] ?? 'futures')
 
-  /* 열려 있는 거래소. 고른 품목이 있으면 그 거래소가 열려 있습니다. */
-  const [openExchange, setOpenExchange] = useState('')
-  const exchange = product?.exchange ?? openExchange
+  /* 목록에서 펼친 거래소. **고른 품목과 따로입니다** — 처음에는 다 접혀 있고(`null`),
+     거래소 줄을 누르면 펼치고 다시 누르면 접습니다. 품목은 상품군 안의 품목을 눌러야
+     바뀝니다. 다른 화면에 갔다 오면 이 화면이 새로 서서 다시 다 접힙니다. */
+  const [openExchange, setOpenExchange] = useState<string | null>(null)
+  /* 종류를 고를 수 있는지 보는 거래소 — 고른 품목의 거래소입니다. */
+  const exchange = product?.exchange ?? ''
 
   /* 이 거래소에 그 종류가 있는지. 마스터가 손에 있어 확실히 압니다 —
      없는 것을 「모를 수도 있음」으로 두지 않고 아예 못 누르게 합니다. */
@@ -100,28 +112,28 @@ export function InstrumentsScreen({
     if (first) onProductChange(first.code)
   }
 
-  /* 거래소를 바꿔도 고른 종류는 그대로 둡니다 — 「옵션을 보다가 다른 거래소의
-     옵션을 보는」 흐름이 자연스럽고, 되돌리면 매번 다시 눌러야 합니다.
-     그 거래소에 그 종류가 없으면 **첫 품목으로 가고 종류는 그 품목이 가진
-     첫 종류**가 됩니다 — 종류를 먼저 정해 두고 품목을 찾으면 빈 화면이
-     나올 수 있습니다. */
-  const pickExchange = (next: string) => {
-    setOpenExchange(next)
-    const keep = all.find((item) => item.exchange === next && kindsOf(item).includes(kind))
-    const first = keep ?? all.find((item) => item.exchange === next)
-    if (first) onProductChange(first.code)
-  }
-
   const pickMarket = (next: 'domestic' | 'overseas') => {
     if ((next === 'overseas') === overseas) return
     /* 국내는 주간·야간을 고르지 않습니다. 어느 세션인지는 시계가 정합니다. */
     onContextChange(next === 'overseas' ? 'overseas' : 'domestic-day')
+    /* 그 시장의 첫 알약이 있으면 그 품목이 섭니다 — 목록 맨 앞 품목은 그 시장의
+       아무 품목이라 볼 까닭이 없습니다. 알약이 없으면 지금 종류를 가진 첫 품목입니다. */
     const list = productsOf(next)
-    const first = list.find((item) => kindsOf(item).includes(kind)) ?? list[0]
+    const pin = pins.find((item) => item.market === next)
+    const first =
+      (pin ? productOfPin(pin) : null) ?? list.find((item) => kindsOf(item).includes(kind)) ?? list[0]
     if (first) {
-      setOpenExchange(first.exchange)
+      /* 시장을 바꾸면 목록은 다시 다 접힌 채로 섭니다. */
+      setOpenExchange(null)
       onProductChange(first.code)
     }
+  }
+
+  /* 알약을 누르면 그 품목이 상세 칸에 섭니다. 다른 시장의 품목이면 시장도 그쪽으로
+     옮깁니다. 왼쪽 목록은 건드리지 않습니다 — 접혀 있으면 접힌 채입니다. */
+  const openPin = (pin: ProductPin) => {
+    if (pin.market !== market) onContextChange(pin.market === 'overseas' ? 'overseas' : 'domestic-day')
+    onProductChange(pin.code)
   }
 
   /* **이 목록은 값을 안 그립니다** — 종목명·코드·만기·잔존·거래승수·호가단위뿐이고
@@ -190,10 +202,10 @@ export function InstrumentsScreen({
           /* 해외는 종류가 고르는 축이 아니라 품목의 꼬리표라 안 거릅니다.
              거르면 선물 품목만 남고 옵션·스프레드 품목이 내비에서 사라집니다. */
           kind={overseas ? null : kind}
-          exchange={exchange}
+          exchange={openExchange}
           width={nav.width}
           onSelect={(item) => onProductChange(item.code)}
-          onExchangeChange={pickExchange}
+          onExchangeChange={setOpenExchange}
         />
       </div>
 
@@ -209,6 +221,14 @@ export function InstrumentsScreen({
       />
 
       <div className="instr-body">
+        <DefaultProducts
+          pins={pins}
+          editable={pinsEditable}
+          current={product ? { market, code: product.code } : null}
+          onOpen={openPin}
+          onChange={storePins}
+        />
+
         <div className="instr-head">
           <h1 className="t-screen">{product?.name ?? '종목'}</h1>
 

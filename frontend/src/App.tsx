@@ -26,11 +26,16 @@ import { InstrumentsScreen } from './screens/instruments/InstrumentsScreen'
 import { TradeScreen } from './screens/trade/TradeScreen'
 import { StrategyScreen } from './screens/strategy/StrategyScreen'
 import { LeaveGuard } from './screens/strategy/LeaveGuard'
-import { hasUnsaved, openRunTab, revertDrafts } from './data/strategyStore'
+import { hasUnsaved, loadRuns, openRunTab, revertDrafts } from './data/strategyStore'
 import { Toasts } from './app/Toasts'
 import { ScreenBoundary } from './app/ScreenBoundary'
 import { dismissRunToasts, notifyTargets } from './data/alerts'
-import { setStrategyTabShown, strategyTabShown, useStrategyTabShown } from './data/strategyTab'
+import {
+  needsRunsForTab,
+  setStrategyTabShown,
+  strategyTabShown,
+  useStrategyTabShown,
+} from './data/strategyTab'
 import './app/shell.css'
 import './app/SearchBox.css'
 
@@ -77,12 +82,11 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [environment.config])
   const [context, setContext] = useState<MarketContext>('domestic-day')
-  /* 계좌 화면이 보는 시장. **일반주문·종목 화면의 시장과 따로 갑니다** — 해외 종목을
-     보다가 계좌에 들어와도 계좌는 마지막으로 본 시장 그대로 열리고, 계좌에서
-     시장을 바꿔도 다른 화면은 따라가지 않습니다. 특정 시장으로 여는 길(홈의
-     「더 보기」)만 그 시장으로 열고 여기에 남깁니다. */
-  const [storedAccountMarket, setAccountMarket] = useStoredState<string>('nh.account.market', 'domestic')
-  const accountMarket: Market = storedAccountMarket === 'overseas' ? 'overseas' : 'domestic'
+  /* 계좌 화면이 보는 시장. **일반주문·종목 화면의 시장과 따로 갑니다** — 계좌에서
+     시장을 바꿔도 다른 화면은 따라가지 않습니다. 상단 탭으로 계좌에 들어오면 국내로
+     열리고(`enterPage`), 특정 시장으로 여는 길(홈의 잔고 카드)만 그 시장으로 엽니다.
+     저장하지 않습니다 — 앱을 다시 켜면 국내입니다. */
+  const [accountMarket, setAccountMarket] = useState<Market>('domestic')
 
   /* **계좌의 주문/체결 알림은 앱이 한 곳에서 겁니다.** 어느 화면에 있든(홈·계좌·
      일반주문) 앱 밖에서 낸 주문의 체결까지 와야, 보고 있는 목록이 따라옵니다.
@@ -113,6 +117,14 @@ function App() {
   pageRef.current = page
   /* 상단 전략주문 탭을 보일지(설정 「화면」). 꺼도 전략 엔진과 실행은 그대로입니다. */
   const strategyShown = useStrategyTabShown()
+  /* 보일지 정한 값이 없으면 실행 목록을 한 번 받아 봅니다 — 끝나지 않은 실행이 있으면
+     탭을 켬으로 봅니다(`data/strategyTab.ts`). 값이 있으면 묻지 않습니다. 이때 실행
+     목록이 한 번 채워지므로, 값 없는 사용자는 「전략 목록」 탭을 처음 열 때 하던 조회를
+     건너뛰고 이 목록에 실시간 방송을 더해 씁니다. */
+  const uiReady = ui.status !== 'loading'
+  useEffect(() => {
+    if (uiReady && needsRunsForTab()) void loadRuns()
+  }, [uiReady])
   /* 계좌의 어느 탭을 보고 있는지. 계좌 안이 아니라 여기에 두는 이유는,
      홈의 「더 보기」처럼 특정 탭을 보러 들어오는 길이 있어서입니다. */
   const [accountTab, setAccountTab] = useState('잔고')
@@ -304,6 +316,18 @@ function App() {
     setPage(next)
   }
 
+  /* 상단 탭으로 화면에 들어올 때. 다른 화면에서 계좌로 들어오면 **국내 · 잔고**로
+     엽니다 — 계좌는 들어올 때마다 같은 자리에서 시작합니다. 특정 탭·시장으로 여는
+     길(홈의 「더 보기」·잔고 카드)은 이 함수를 지나지 않아 그 탭·시장 그대로입니다.
+     계좌 안에서 계좌 탭을 다시 누르면 보던 그대로 둡니다. */
+  function enterPage(next: Page) {
+    if (next === 'account' && pageRef.current !== 'account') {
+      setAccountTab('잔고')
+      setAccountMarket('domestic')
+    }
+    goPage(next)
+  }
+
   /* 저장 안 한 설정 확인 창의 답을 기다리는 탭 끄기. 「버리고 이동」이면 `true`,
      「여기 남기」면 `false` 로 풉니다. */
   const hideAnswerRef = useRef<((left: boolean) => void) | null>(null)
@@ -367,10 +391,9 @@ function App() {
         quoteStalled={quoteStalled}
         master={master}
         recent={recent}
-        onPageChange={goPage}
-        /* 파일 값이 오기 전에는 켬으로 그립니다. 기본이 켬이라, 그동안 숨겼다가 세우면
-           대부분의 사람에게 뒤의 「계좌」 탭이 켤 때마다 한 칸 밀립니다. 꺼 둔 사람에게는
-           값이 올 때까지 탭이 잠깐 보입니다. */
+        onPageChange={enterPage}
+        /* 파일 값이 오기 전에는 기본값(끔)으로 그립니다. 켬으로 저장한 사람에게는 값이 온
+           뒤에 전략주문 탭이 나타납니다. */
         strategyShown={strategyShown}
         settingsOpen={settingsOpen}
         onOpenSettings={() => setSettingsOpen(true)}

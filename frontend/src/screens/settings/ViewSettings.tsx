@@ -79,6 +79,8 @@ export function ViewSettingsGroup({ onHideStrategy }: { onHideStrategy: () => Pr
         </p>
       )}
       <p className="settings-note">
+        처음에는 꺼져 있고, 실행 중인 전략이 있으면 켜진 채로 보입니다. 켜면 상단에 전략주문
+        탭이 생기고 전략 알림이 납니다.
         끄면 상단의 전략주문 탭과 전략 알림이 숨겨집니다. 실행 중인 전략이 있으면 끌 수 없습니다.
       </p>
     </section>

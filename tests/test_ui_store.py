@@ -53,6 +53,16 @@ def test_전략주문_탭_보이기를_끄고_켜며_다시_읽는다(store):
     assert UiStore(store.path).read()["values"]["nh.nav.strategy"] is True
 
 
+def test_기본_품목을_담고_다시_읽는다(store):
+    """종목 화면의 기본 품목은 (시장, 품목 코드) 목록입니다. 차례가 그대로 남고, 다 뺀 빈 목록도 빈 목록으로 남습니다."""
+    목록 = [{"market": "domestic", "code": "USD"}, {"market": "overseas", "code": "GC"}]
+    store.patch({"nh.instruments.defaults": 목록})
+    assert UiStore(store.path).read()["values"]["nh.instruments.defaults"] == 목록
+
+    store.patch({"nh.instruments.defaults": []})
+    assert UiStore(store.path).read()["values"]["nh.instruments.defaults"] == []
+
+
 def test_두_칸_배치를_담고_다시_읽는다(store):
     """차트 두 칸일 때의 배치는 한 칸 배치와 따로 담깁니다. 값은 화면이 정한 객체 그대로입니다."""
     배치 = {"ordersOpen": True, "ordersHeight": 260, "columns": {"r1Width": 320, "r2Width": 280}}
@@ -94,8 +104,8 @@ def test_모르는_이름도_거절한다(store):
 
 def test_옮기는_항목과_남기는_항목이_겹치지_않는다():
     assert set(STORED_KEYS) & set(DEVICE_KEYS) == set()
-    assert len(STORED_KEYS) == 8
-    assert len(DEVICE_KEYS) == 7
+    assert len(STORED_KEYS) == 9
+    assert len(DEVICE_KEYS) == 6
 
 
 def test_파일에_이미_있는_모르는_이름은_지우지_않는다(store, tmp_path):

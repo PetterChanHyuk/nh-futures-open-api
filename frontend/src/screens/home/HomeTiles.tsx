@@ -5,7 +5,7 @@ import { useBars, usePrice } from '../../data/quotes'
 import { useSession } from '../../data/session'
 import type { Tile } from '../../data/homeWatch'
 
-/* 기준 종목 하나만 큰 타일입니다. 스파크라인이 길수록·높을수록 형태가
+/* 펼친 줄 하나만 곡선을 그립니다. 스파크라인이 길수록·높을수록 형태가
  * 읽히므로, 홈에서 세로로 늘어나는 것은 이 하나뿐입니다. */
 /** 여러 시각 중 **가장 최근**. 둘 다 오늘 안에서 이미 지난 시각이라는 것을
  *  써서 「지금으로부터 얼마나 지났나」로 견줍니다 — 국내 야간장은 자정을 넘겨
@@ -64,78 +64,63 @@ function faceWord(face: TileFace): string {
   return '거래 없음'
 }
 
-export function LeadTile({ tile }: { tile: Tile }) {
-  const price = fracWidth(tile.decimals)
+/** 펼친 줄 아래에 붙는 판. 흐름 선(높이 120)과 그 기준값(전일 종가) 한 줄,
+ *  그리고 그 종목의 주문 화면으로 가는 단추입니다.
+ *
+ *  **이름·값은 다시 적지 않습니다** — 바로 위 줄이 같은 열에 이미 적고 있습니다.
+ *  판에는 줄이 못 담는 것(흐름)과 다음 할 일(주문하러 가기)만 둡니다.
+ *
+ *  **값이 없으면 선 자리도 없습니다.** 자리만 잡아 두면 빈 판이 「곧 온다」로
+ *  읽히는데, 값이 없는 까닭은 위 줄이 이미 말합니다. 그때는 단추만 섭니다. */
+export function OpenPanel({ tile, onOrder }: { tile: Tile; onOrder: () => void }) {
   const face = useTileFace(tile)
-  /* 곡선은 **큰 타일에만** 있습니다. 작은 줄에서 56×24 곡선이 주는 것은
+  /* 곡선은 **펼친 줄에만** 있습니다. 접힌 줄에서 작은 곡선이 주는 것은
      오르내림 모양 하나인데, 그것은 바로 옆 숫자와 등락률이 이미 말합니다.
-     큰 타일은 원래 더 보여 주는 자리라 값 하나를 더 부를 만합니다. */
+     펼친 줄은 원래 더 보여 주는 자리라 값 하나를 더 부를 만합니다. */
   const bars = useBars(face.kind === 'values' ? tile.code : '')
 
+  /* 판 어디를 눌러도 주문 화면으로 갑니다 — 펼친 줄을 누른 것과 같습니다. 키보드는
+     아래 단추가 같은 일을 합니다. */
   return (
-    <>
-      <span className="tile-name">
-        {tile.name}
-        {/* 이 누름이 화면을 나간다는 표시입니다. 오른쪽 화살표는 「다른 곳으로」,
-            작은 줄의 위쪽 화살표는 「여기 안에서」를 뜻합니다. */}
-        <span className="tile-hint" aria-hidden="true">
-          주문으로 →
-        </span>
-      </span>
-      {face.kind === 'values' ? (
-        <>
-          <span className="tile-price" style={price}>
-            <Num value={face.last} decimals={tile.decimals} />
-          </span>
-          {/* 안 온 칸은 빈 채입니다 — 0 으로 적으면 「안 움직였다」가 되고, 「—」는 이
-              시장에 원래 없는 값의 말입니다. */}
-          <span className="tile-change">
-            <span style={price}>
-              {face.change !== null && <Num value={face.change} decimals={tile.decimals} signed toned />}
-            </span>
-            <span style={fracWidth(2, 1)}>
-              {face.changePct !== null && (
-                <Num value={face.changePct} decimals={2} signed toned suffix="%" />
-              )}
-            </span>
-          </span>
-        </>
-      ) : (
-        /* 값이 없으면 **까닭만** 그 자리에 섭니다. 숫자 자리를 뼈대나 「—」로
-           채우지 않습니다 — 뼈대는 「곧 온다」는 말이고, 「—」는 「이 종목엔
-           원래 없는 값」이라는 말입니다. */
-        <span className="tile-word">{faceWord(face)}</span>
-      )}
-      {/* 선은 이름·값 아래에 카드 폭을 다 씁니다. 흐름이 형태로 읽히려면 길게
-          깔려야 합니다 — 짧게 자르면 같은 자료가 잔물결이 됩니다.
-          **값이 없으면 선 자리도 없습니다.** 자리만 잡아 두면 회색 블록이
-          「곧 온다」로 읽히는데, 조회가 아직 없는 자리에는 안 옵니다. */}
+    <div className="home-quote-panel" onClick={onOrder}>
+      {/* 선은 판 폭을 다 씁니다. 흐름이 형태로 읽히려면 길게 깔려야 합니다 —
+          짧게 자르면 같은 자료가 잔물결이 됩니다. */}
       {face.kind === 'values' && (
-      <Spark
-        points={bars ? bars.map((bar) => bar.close) : null}
-        loaded={bars !== null}
-        stretch
-        width={1120}
-        height={160}
-        /* 기준선은 **전일 종가**입니다 — 이 타일이 적는 현재가와 전일대비에서
-           셉니다. 봉의 끝 값으로 짓지 않습니다(오늘 봉이 없거나 늦게 올 수 있고,
-           그러면 기준이 어제가 아니게 됩니다). 전일대비가 안 온 종목은 모릅니다. */
-        base={
-          face.kind === 'values' && face.change !== null && Number.isFinite(face.last - face.change)
-            ? face.last - face.change
-            : null
-        }
-        times={bars ? bars.map((bar) => barTime(bar.timestamp)) : undefined}
-        decimals={tile.decimals}
-      />
+        <Spark
+          points={bars ? bars.map((bar) => bar.close) : null}
+          loaded={bars !== null}
+          stretch
+          width={1120}
+          height={160}
+          /* 기준선은 **전일 종가**입니다 — 위 줄이 적는 현재가와 전일대비에서
+             셉니다. 봉의 끝 값으로 짓지 않습니다(오늘 봉이 없거나 늦게 올 수 있고,
+             그러면 기준이 어제가 아니게 됩니다). 전일대비가 안 온 종목은 모릅니다. */
+          base={face.change !== null && Number.isFinite(face.last - face.change) ? face.last - face.change : null}
+          times={bars ? bars.map((bar) => barTime(bar.timestamp)) : undefined}
+          decimals={tile.decimals}
+        />
       )}
-    </>
+      {/* 이 누름은 화면을 나갑니다. 오른쪽 화살표가 「다른 곳으로」를 말합니다.
+          판의 누름과 같은 일이라, 판까지 올라가 두 번 가지 않게 여기서 멈춥니다. */}
+      <button
+        type="button"
+        className="btn btn-quiet home-quote-go"
+        aria-label={`${tile.name} 주문 화면으로`}
+        onClick={(event) => {
+          event.stopPropagation()
+          onOrder()
+        }}
+      >
+        주문 화면으로 →
+      </button>
+    </div>
   )
 }
 
-/* 나머지 다섯은 가로 한 줄짜리 목록입니다. 세로로 쌓으면 이름·값·등락이
- * 타일 높이에 안 들어가고, 다섯은 고르기 전에 훑는 대상이라 목록이 맞습니다. */
-export function QuoteRow({ tile }: { tile: Tile }) {
+/* 여섯 줄은 가로 한 줄짜리 목록입니다. 세로로 쌓으면 이름·값·등락이
+ * 타일 높이에 안 들어가고, 고르기 전에 훑는 대상이라 목록이 맞습니다.
+ * 펼친 줄(`open`)도 같은 높이·같은 열로 서고, 그 아래에 판이 붙습니다. */
+export function QuoteRow({ tile, open }: { tile: Tile; open: boolean }) {
   const price = fracWidth(tile.decimals)
   const face = useTileFace(tile)
 
@@ -144,10 +129,17 @@ export function QuoteRow({ tile }: { tile: Tile }) {
       {/* 목록의 이름은 잘려도 됩니다 — 여럿 중 하나를 찾는 자리라 앞부분이면
           알아봅니다. 다만 전체는 물어볼 수 있어야 합니다. */}
       <span className="quote-name" title={tile.name}>
+        {/* 펼친 줄이라는 표시. 줄 아래에 판이 붙어도 어느 줄의 판인지 이름
+            앞에서 먼저 읽히게 합니다. */}
+        {open && <span className="quote-dot" aria-hidden="true" />}
         {tile.name}
-        <span className="quote-hint" aria-hidden="true">
-          ↑ 크게 보기
-        </span>
+        {/* 이미 펼친 줄에는 안 답니다 — 펼친 줄의 누름은 판의 「주문 화면으로」
+            단추가 말합니다. */}
+        {!open && (
+          <span className="quote-hint" aria-hidden="true">
+            ↓ 펼쳐 보기
+          </span>
+        )}
       </span>
       {face.kind === 'values' ? (
         <>
@@ -191,23 +183,34 @@ export type Slot = { kind: 'tile'; tile: Tile } | { kind: 'stale'; code: string 
  * 대부분입니다. **못 찾았을 때 대신 세울 것이 있으면 그것을 세웁니다** — 저장한
  * 것이 코드뿐이라 이름 자리에 코드(흐림), 값 자리에 한 마디. 숫자 자리를 뼈대나
  * 「—」로 채우지 않습니다(앞은 「곧 온다」, 뒤는 「원래 없다」라 둘 다 거짓이고,
- * 할 일이 있습니다 — 빼거나 바꿉니다). 큰 타일이면 곡선 자리도 없습니다 —
- * 자리를 남기고 비우면 「아직 안 받음」으로 읽힙니다. */
-export function StaleTile({ code, lead }: { code: string; lead: boolean }) {
-  /* 큰 타일과 목록 줄은 다른 격자라 같은 칸 이름을 씁니다 — 목록 줄에서는
-     한 마디가 값 세 칸을 대신합니다(값이 없는 종목 줄과 같은 자리). */
+ * 할 일이 있습니다 — 빼거나 바꿉니다). 이 줄은 펼치지 않습니다 — 그릴 곡선이
+ * 없고, 자리를 남기고 비우면 「아직 안 받음」으로 읽힙니다. */
+export function StaleTile({ code }: { code: string }) {
+  /* 한 마디가 값 세 칸을 대신합니다(값이 없는 종목 줄과 같은 자리). */
   return (
     <>
-      <span className={`${lead ? 'tile-name' : 'quote-name'} home-stale-code`} title={code}>
+      <span className="quote-name home-stale-code" title={code}>
         {code}
       </span>
-      {/* 큰 타일은 문장, 목록 줄은 한 마디 — 자리 폭이 다릅니다. 까닭(만기 지남
-          등)은 화면이 모르니 적지 않습니다. 낱말은 못 연 종목 줄(`app-missing`)과
-          같습니다. */}
-      <span className={lead ? 'tile-word' : 'quote-word'}>
-        {lead ? '종목 목록에 없는 종목입니다' : '목록에 없음'}
-      </span>
+      {/* 까닭(만기 지남 등)은 화면이 모르니 적지 않습니다. 낱말은 못 연 종목
+          줄(`app-missing`)과 같습니다. */}
+      <span className="quote-word">목록에 없음</span>
     </>
+  )
+}
+
+/** 순서를 바꾸는 손잡이의 여섯 점. 일반주문 카드의 손잡이와 같은 모양입니다 —
+ *  같은 일(끌어서 옮기기)에 다른 모양을 쓰면 다른 일로 읽힙니다. */
+export function GripDots() {
+  return (
+    <svg viewBox="0 0 10 14" aria-hidden="true">
+      <circle cx="2" cy="2" r="1.5" />
+      <circle cx="8" cy="2" r="1.5" />
+      <circle cx="2" cy="7" r="1.5" />
+      <circle cx="8" cy="7" r="1.5" />
+      <circle cx="2" cy="12" r="1.5" />
+      <circle cx="8" cy="12" r="1.5" />
+    </svg>
   )
 }
 

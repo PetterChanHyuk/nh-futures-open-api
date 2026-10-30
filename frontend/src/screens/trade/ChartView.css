@@ -23,10 +23,18 @@
   color: var(--text);
 }
 
+/* 대상이 아닌 칸의 배지는 대상 칸보다 한 급 낮은 라벨색입니다. 낮추되 읽기 기준
+ * (4.5:1) 아래로는 내리지 않습니다 — 이 배지가 이 칸에 무엇이 서 있는지 말하는 유일한
+ * 자리라, 흐려서 안 읽히면 두 칸을 둔 뜻이 없어집니다. 값 자리의 말(「행사가 선택」·
+ * 「아직 시세가 없습니다」)도 같은 색입니다. */
+.chart-box.is-idle .chart-badge,
+.chart-box.is-idle .chart-badge .chart-badge-pending {
+  color: var(--text-label);
+}
+
 .chart-box.is-idle .chart-badge {
   background: var(--surface);
   box-shadow: inset 0 0 0 1.5px var(--inactive);
-  color: var(--text-dim);
 }
 
 /* 차트는 남는 자리를 다 씁니다. 라이브러리가 이 칸의 크기를 재서 그리므로
@@ -242,17 +250,20 @@
   text-align: center;
 }
 
-/* 종목이 없는 둘째 칸. 배지 하나만 서고 차트는 비웁니다. 주문 대상이 될 수 없는
- * 칸이라 눌러도 대상이 옮겨 가지 않습니다 — 손 모양도 띄우지 않습니다. */
+/* 종목이 없는 둘째 칸. 배지와 가운데 차례 두 줄만 서고 차트는 비웁니다. 주문 대상이
+ * 될 수 없는 칸이라 눌러도 대상이 옮겨 가지 않습니다 — 손 모양도 띄우지 않습니다. */
 .chart-box.is-empty,
 .chart-box.is-empty:hover {
   box-shadow: inset 0 0 0 1.5px var(--divider);
   cursor: default;
 }
 
-.chart-badge.chart-badge-empty {
+/* 누를 곳을 말하는 글자라 읽기 기준(4.5:1)을 넘는 라벨색입니다. 빈 칸은 늘 대상이
+ * 아닌 칸이라 `.is-idle .chart-badge` 도 함께 맞습니다. 그 규칙의 색이 바뀌어도 이
+ * 글자는 기준을 지키도록 더 구체적인 선택자로 따로 적습니다. */
+.chart-box.is-empty .chart-badge.chart-badge-empty {
   top: 0;
-  color: var(--text-dim);
+  color: var(--text-label);
 }
 
 /* 옵션인데 행사가(또는 콜/풋)를 아직 안 고른 칸. 그릴 봉이 없어 빈 격자를 숨기고
@@ -272,6 +283,19 @@
   font-size: 12px;
   color: var(--text-dim);
   pointer-events: none;
+}
+
+/* 차례를 두 줄로 적는 안내 — 두 칸의 대상이 아닌 옵션 칸과 빈 칸. 무엇을 할지 말하는
+ * 글자라 라벨색이고, 첫 줄(먼저 할 일)이 한 단 큽니다. */
+.chart-pending-note.is-two {
+  flex-direction: column;
+  gap: 2px;
+  text-align: center;
+  color: var(--text-label);
+}
+
+.chart-pending-lead {
+  font-size: 13px;
 }
 
 /* 카드 머리 띠의 [한 칸 | 두 칸 ▾]. 확대 단추와 같은 높이로 붙어 섭니다. 눌린

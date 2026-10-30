@@ -258,96 +258,98 @@
   overflow-x: auto;
 }
 
-/* 머리글과 다섯 줄이 한 격자를 씁니다. 열 폭은 이 격자 하나가 정하고 줄들은
+/* 머리글과 여섯 줄이 한 격자를 씁니다. 열 폭은 이 격자 하나가 정하고 줄들은
  * 그 열을 물려받습니다 — 종목 열의 바닥이 「가장 긴 이름」 하나로 잡혀
  * 값 열이 줄 사이에서 어긋나지 않습니다.
  *
  * 열 폭의 합보다 좁아지지 않습니다. 이것이 없으면 격자가 카드 폭에 맞춰지고
- * 종목 열만 0 으로 눌립니다. 남는 세로는 행이 44 에서 56 까지 받습니다. */
+ * 종목 열만 0 으로 눌립니다.
+ *
+ * 줄 높이는 44 입니다. 펼친 줄만 그 아래 곡선만큼 높아지고, 카드는 내용
+ * 높이로 서므로 늘어난 만큼은 페이지가 굴립니다. */
 .quote-table {
   display: grid;
   grid-template-columns: var(--quote-cols);
   grid-template-rows: 32px;
-  /* 행은 44 에서 시작해 남는 세로를 받습니다. 상한을 행에 직접 두면 높이가
-   * 정해지지 않은 격자는 무조건 상한까지 자라므로, 상한은 표 전체에 둡니다 —
-   * 칸이 늘 다섯이라 머리글 32 + 56 × 5 입니다. */
   grid-auto-rows: minmax(44px, auto);
   column-gap: 16px;
-  flex: 1 1 auto;
-  max-height: 312px;
   min-width: max-content;
 }
 
 
-/* 타일 안의 선은 타일 폭을 따라갑니다 — 고정 폭이면 좁은 창에서 카드 밖으로
- * 밀려 화면 전체가 가로로 스크롤합니다. */
-.home-tile .spark-frame,
-.home-tile .spark-wrap,
-.home-tile .spark,
-.home-tile .spark-empty,
-.home-tile .spark-none {
+/* ── 펼친 줄의 판 ─────────────────────────────────────── */
+
+/* 펼친 줄 아래에 붙는 판. 목록 폭을 다 씁니다 — 열 하나에 담으면 선이 종목 열
+ * 폭으로 줄어듭니다. 줄(44)과 판(168)이 한 덩어리 212 입니다: 선 120, 그 아래
+ * 기준값과 단추가 서는 한 줄(위 여백 8 + 28), 아래 여백 12.
+ * 좌우 안쪽 여백(12)은 줄과 같아 선 끝이 등락률 열 끝과 맞습니다. */
+.home-quote-panel {
+  grid-column: 1 / -1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* 값이 없어 선이 안 서도 단추 한 줄은 섭니다. */
+  min-height: 40px;
+  padding: 0 12px 12px;
+  /* 판을 누르면 주문 화면으로 갑니다. */
+  cursor: pointer;
+}
+
+/* 선은 판 폭을 따라갑니다 — 고정 폭이면 좁은 창에서 카드 밖으로 밀려 화면
+ * 전체가 가로로 스크롤합니다. */
+.home-quote-panel .spark-frame,
+.home-quote-panel .spark-wrap,
+.home-quote-panel .spark,
+.home-quote-panel .spark-empty,
+.home-quote-panel .spark-none {
   width: 100%;
 }
 
-.home-tile {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  text-align: left;
-  transition: background-color 120ms ease-out;
-}
-
-.home-tile:hover {
-  background-color: var(--hover);
-}
-
-/* 기준 종목이라 값이 가장 큽니다. 글자 묶음과 선이 나란히 서고, 남는 세로를
- * 선이 72 까지 받습니다.
- *
- * 이 아래로는 안 줄어듭니다. 자리가 모자랄 때 눌려서 종목명이 잘리면
- * 스크롤보다 나쁩니다 — 스크롤은 내려서 보면 되지만 잘린 글자는 볼 방법이
- * 없습니다. */
-.home-tile-lead {
-  flex: 0 0 auto;
-}
-
-/* 선은 카드 폭을 다 쓰고, 세로는 120 에서 시작해 자리가 남으면 160 까지
- * 자랍니다. 상한을 두는 이유는 선이 늘어나면 뜻이 변하기 때문입니다 —
- * 같은 20 점이 창 높이에 따라 무풍으로도 랠리로도 보이면, 형태가 값이 아니라
- * 창 크기를 말하는 것입니다. */
 /* 선 높이는 120 하나입니다. 창을 키워도 안 자랍니다 — 페이지가 세로로
  * 스크롤하므로 자랄 이유가 없고, 창마다 다른 높이면 같은 20 점이 창에 따라
  * 무풍으로도 랠리로도 보입니다. 형태가 값만 말하게 두는 편이 낫습니다. */
-.home-tile-lead .spark-wrap {
+.home-quote-panel .spark-wrap {
   flex: 0 0 auto;
-  width: 100%;
   height: 120px;
 }
 
 /* 목록용 기본값(24px)이 남아 있으면 자리를 받는 것은 감싼 칸뿐이고 선은
- * 그대로라, 타일 아래쪽이 통째로 빕니다 — 가로 방향의 `flex` 는 세로를
- * 늘려 주지 않습니다. */
-.home-tile-lead .spark {
-  width: 100%;
+ * 그대로라, 판 아래쪽이 통째로 빕니다. */
+.home-quote-panel .spark {
   height: 100%;
 }
 
 /* 받기 전·자료 없음도 **선이 설 자리 높이 그대로**입니다. 한 줄로 줄면 선이
- * 올 때마다 타일 아래 목록이 오르내립니다. */
-.home-tile-lead .spark-empty,
-.home-tile-lead .spark-none {
+ * 올 때마다 아래 줄들이 오르내립니다. */
+.home-quote-panel .spark-empty,
+.home-quote-panel .spark-none {
   flex: 0 0 auto;
   height: 120px;
 }
 
-.home-tile-lead .spark-none {
+.home-quote-panel .spark-none {
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 12px;
+}
+
+/* 기준값 한 줄은 판 아래 왼쪽에, 단추와 같은 높이로 섭니다. 오른쪽은 단추
+ * 자리라 비워 둡니다. */
+.home-quote-panel .spark-base-label {
+  justify-content: flex-start;
+  align-items: center;
+  min-height: 28px;
+  margin-top: 8px;
+}
+
+/* 주문 화면으로 가는 단추. 판 아래 오른쪽 모서리에 붙습니다. */
+.home-quote-go {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  height: 28px;
+  padding: 0 10px;
   font-size: 12px;
 }
 
@@ -361,7 +363,7 @@
   grid-template-columns: subgrid;
   align-items: center;
   height: 32px;
-  padding: 0 12px;
+  padding: 0 12px 0 var(--quote-inset);
   /* 목록의 행 사이 선과 같은 값입니다. 머리 아래만 진하면 「이름과 값이 갈리는
    * 자리」가 「종목끼리 갈리는 자리」보다 세 보여, 목록이 두 덩어리로 읽힙니다. */
   border-bottom: 1px solid var(--row-line);
@@ -377,7 +379,7 @@
   text-align: left;
 }
 
-/* 다섯은 고르기 전에 훑는 대상이라 목록입니다. 세로로 쌓으면 이름·값·등락이
+/* 여섯은 고르기 전에 훑는 대상이라 목록입니다. 세로로 쌓으면 이름·값·등락이
  * 타일 높이에 안 들어가고, 가로 한 줄이면 잘릴 일이 없습니다. */
 /* 목록 자체는 상자를 안 만듭니다. 줄들이 머리글과 같은 격자의 행이 되어야
  * 하므로, 목록은 격자와 줄 사이에서 비켜섭니다. */
@@ -396,6 +398,15 @@
   grid-template-columns: subgrid;
 }
 
+/* 줄 안의 첫 행이 값 줄(44)이고, 펼친 줄이면 그 아래 행에 판이 섭니다. */
+.home-quote-list > li {
+  grid-template-rows: 44px;
+}
+
+/* 펼친 줄과 그 판에는 바탕을 따로 깔지 않습니다. 카드 바탕 위에 한 겹 밝은 상자가
+ * 서면 펼친 줄이 테두리를 두른 것처럼 읽힙니다. 판이 어느 줄의 것인지는 이름 앞의
+ * 점과, 줄과 판을 함께 감싸는 위아래 행 선이 말합니다. */
+
 /* 열 폭은 머리글 줄과 함께 씁니다. 종목 열의 바닥은 가장 긴 이름입니다 —
  * 남는 폭은 이 열이 받고, 모자라면 카드가 밉니다. */
 /* 줄의 좌우 안쪽 여백(12)은 양 끝 열이 흡수합니다. 차트 열은 선 120 에 그
@@ -404,15 +415,21 @@
   /* 곡선 열은 두지 않습니다 — 56×24 곡선이 주는 것은 오르내림 모양 하나인데,
    * 같은 줄의 현재가·전일대비·등락률이 이미 그것을 말합니다. 빈 열로
    * 남기지 않고 폭을 값 열에 돌려줍니다 — 비워 두면 「아직 안 받음」으로
-   * 읽힙니다. 흐름을 형태로 보는 자리는 큰 타일 하나로 둡니다. */
+   * 읽힙니다. 흐름을 형태로 보는 자리는 펼친 줄 하나로 둡니다. */
   --quote-cols: minmax(max-content, 1fr) 96px 76px 76px;
+  /* 줄 왼쪽 안쪽 여백. 줄 여백 12 에 순서를 바꾸는 손잡이 20 과, 펼친 줄의 점이
+   * 서는 칸 12 를 더한 값입니다. 머리글도 같은 값이라 「종목」이 종목 이름과 같은
+   * 세로선에 섭니다. */
+  --quote-inset: 44px;
 }
 
 .quote-row {
+  /* 펼친 줄의 점이 이 줄을 기준으로 섭니다. */
+  position: relative;
   align-items: center;
   width: 100%;
   height: 100%;
-  padding: 0 12px;
+  padding: 0 12px 0 var(--quote-inset);
   border-radius: 8px;
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -421,38 +438,6 @@
 
 .quote-row:hover {
   background-color: var(--hover);
-}
-
-/* 맞바꿈. 들어오는 쪽만 움직입니다 — 큰 타일은 아래에서 올라오고(그 줄이
- * 올라왔으니), 바뀐 줄은 위에서 내려옵니다. 8px 이면 주고받았다는 것이
- * 읽히고, 그 이상은 자리가 흔들린 것으로 보입니다. */
-@keyframes home-swap-up {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-}
-
-@keyframes home-swap-down {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-}
-
-.home-swap-up {
-  animation: home-swap-up 150ms ease-out;
-}
-
-.home-swap-down {
-  animation: home-swap-down 150ms ease-out;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .home-swap-up,
-  .home-swap-down {
-    animation: none;
-  }
 }
 
 .quote-pct.up {
@@ -466,26 +451,7 @@
 
 /* ── 관심종목 여섯 칸 ────────────────────────────────── */
 
-/* 담긴 칸 위에 빼기 단추가 얹힙니다. 자리를 안 쓰므로 시세가 밀리지 않습니다.
- * 감싸는 칸은 안의 타일과 같은 크기여야 합니다 — 내용 폭으로 두면 큰 타일이
- * 선 길이만큼만 넓어져 카드 왼쪽 귀퉁이에 몰립니다. */
-/* 큰 타일과 빼기 단추를 겹쳐 담는 칸. 남는 세로를 먼저 받고 선이 72 에서
- * 멈추는 자리에서 함께 멈춥니다 — 이 칸만 계속 자라면 타일 아래가 빕니다. */
-.home-tile-slot {
-  position: relative;
-  display: flex;
-  /* 안에 든 타일의 높이 그대로입니다. 줄어들면 타일이 칸 밖으로 밀려 나가
-   * 아래 머리글과 목록 위에 겹쳐 그려집니다. */
-  flex: 0 0 auto;
-  align-self: stretch;
-  min-width: 0;
-}
-
-.home-tile-slot > .home-tile {
-  flex: 1;
-  min-width: 0;
-}
-
+/* 담긴 칸 위에 빼기 단추가 얹힙니다. 자리를 안 쓰므로 시세가 밀리지 않습니다. */
 .home-quote-list li {
   position: relative;
 }
@@ -497,6 +463,9 @@
   align-items: center;
   justify-content: center;
   width: 100%;
+  /* 손잡이가 없는 줄이라 왼쪽 자리를 비우지 않습니다 — 비우면 글자가 가운데에서
+   * 비켜 섭니다. */
+  padding: 0 12px;
   border-radius: 10px;
   box-shadow: inset 0 0 0 1px var(--divider);
   font-size: 13px;
@@ -513,6 +482,116 @@
  * 입니다 — 잔선 세기로는 그 섞임이 안 잡힙니다. */
 .home-quote-list li + li {
   border-top: 1px solid var(--row-line);
+}
+
+/* ── 순서 바꾸기 ─────────────────────────────────────── */
+
+/* 손잡이. 줄 왼쪽 여백 안에 섭니다(열을 밀지 않습니다). 평소엔 옅게 서 있다가
+ * 줄에 손이 오면 진해지고, 손잡이 자체에 손이 오면 바탕이 생깁니다. 항상 조금은
+ * 보입니다 — 숨겨 두면 옮길 수 있다는 것을 알 길이 없습니다. 일반주문 카드의
+ * 손잡이와 같은 모양·같은 세기입니다. */
+.home-grip {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  opacity: 0.35;
+  cursor: grab;
+  user-select: none;
+  /* 끌기를 포인터로 직접 따라가므로 이 손잡이 위에서는 화면 스크롤 제스처를
+   * 넘기지 않습니다. */
+  touch-action: none;
+  transition:
+    opacity 0.12s,
+    background-color 0.12s;
+}
+
+.home-grip svg {
+  display: block;
+  width: 10px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.home-quote-list li:hover .home-grip,
+.home-grip:focus-visible {
+  opacity: 1;
+}
+
+.home-grip:hover,
+.home-grip:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+  outline: none;
+}
+
+.home-grip:focus-visible {
+  box-shadow: inset 0 0 0 1.5px var(--brand);
+}
+
+/* 끄는 동안에는 목록 전체가 쥔 손입니다. 줄 위를 지날 때 그 줄의 커서(누르는
+ * 손)가 나오면 놓을 수 있는 곳인지가 커서로 안 읽힙니다 — 답은 벌어진 빈자리가
+ * 합니다. */
+.quote-table[data-dragging],
+.quote-table[data-dragging] * {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* 끄는 동안 빼기 단추는 걷습니다. 줄 위를 지날 때마다 뜨면 손 밑이 어지럽습니다. */
+.quote-table[data-dragging] .home-remove {
+  visibility: hidden;
+}
+
+/* 끄는 동안 비켜나는 줄은 미끄러져 움직입니다. 자리를 옮기는 것은 `transform` 하나라
+ * 목록의 자리 계산은 다시 일어나지 않습니다. 펼친 줄은 판까지 한 덩어리로 움직입니다. */
+.home-quote-list > li {
+  transition: transform 150ms ease-out;
+}
+
+/* 든 줄. 손을 그대로 따라오므로 미끄러지지 않고, 다른 줄 위에 섭니다. 들려 있다는
+ * 것은 바탕·그림자·초록 테두리가 말합니다 — 지나가는 줄의 글자가 비쳐 보이면 어느
+ * 것이 든 줄인지 안 읽힙니다. 테두리는 안쪽에 그어 글자 자리를 밀지 않습니다.
+ *
+ * 무른 뒤 제자리로 미끄러져 돌아가는 동안(`data-returning`)에도 같은 모양입니다.
+ * 줄 사이 선은 감춥니다 — 둥근 모서리 바깥으로 회색 선 끝이 비어져 나옵니다. */
+.home-quote-list > li[data-lifted],
+.home-quote-list > li[data-returning] {
+  z-index: 2;
+  border-top-color: transparent;
+  border-radius: 8px;
+  background-color: var(--surface);
+  box-shadow:
+    inset 0 0 0 2px var(--brand),
+    0 6px 16px rgb(0 0 0 / 0.25);
+}
+
+.home-quote-list > li[data-lifted] {
+  transition: none;
+}
+
+.home-quote-list > li[data-lifted] .home-grip,
+.home-quote-list > li[data-returning] .home-grip {
+  opacity: 1;
+}
+
+.home-quote-list > li[data-lifted] .quote-hint,
+.home-quote-list > li[data-returning] .quote-hint {
+  display: none;
+}
+
+/* 움직임을 줄여 달라는 설정이면 미끄러지지 않고 바로 그 자리에 섭니다. */
+@media (prefers-reduced-motion: reduce) {
+  .home-quote-list > li {
+    transition: none;
+  }
 }
 
 /* ── 담을 종목 고르기 ────────────────────────────────── */
@@ -554,12 +633,10 @@
 /* 색인에 없는 코드가 담긴 칸. 마스터에 돌아오면 다시 눌리는 자리라 **비활성**이고,
  * 이름 자리에 선 코드는 대신 세운 것이라 흐립니다. 바탕은 안 깝니다 — 누를 곳이
  * 아닙니다. */
-.home-tile:disabled,
 .quote-row:disabled {
   cursor: default;
 }
 
-.home-tile:disabled:hover,
 .quote-row:disabled:hover {
   background-color: transparent;
 }
