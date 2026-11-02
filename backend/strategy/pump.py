@@ -446,8 +446,11 @@ class RunPump:
             if self._was_open.get(made.run.id) and not now_open:
                 made.close_session(at)
             self._was_open[made.run.id] = now_open
+            # 시각을 같이 넘깁니다 — 엔진이 지금 단일가 중인지 보고, 그동안 체결이
+            # 없는 것을 공백으로 보지 않습니다(`engine.RunEngine.tick_clock`).
             made.set_auction(
-                self.auction(made.run.market, made.run.code, made.run.session) if now_open else None
+                self.auction(made.run.market, made.run.code, made.run.session) if now_open else None,
+                at=at,
             )
             # 개장 시각은 **거래일마다 한 번** 받습니다. 판정이 무거워 박자마다
             # 부르지 않습니다.
@@ -874,7 +877,7 @@ def _opening_now(market: str, code: str, session: str = "") -> int | None:
 
 
 #: 끝을 모르는 구간의 끝(밀리초). 「계속」입니다.
-_FOREVER = 2**62
+_FOREVER = engine_lib.AUCTION_FOREVER
 
 
 def _auction_now(market: str, code: str, session: str = "") -> tuple[int, int] | None:

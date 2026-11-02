@@ -29,7 +29,8 @@
 
 지표가 설 만큼 봉이 모이지 않았으면 「준비 중」만 남기고 넘어갑니다. 시세가
 끊긴 동안(`GAP_SECONDS`)도 판정·체결·감시를 멈춥니다. 모르는 구간을 아는 것처럼
-메우면 없던 신호와 없던 체결이 생깁니다.
+메우면 없던 신호와 없던 체결이 생깁니다. 국내 단일가(동시호가) 구간에 체결이 없는
+것은 끊김이 아니라 정상이라 공백으로 보지 않습니다(`tick_clock`).
 """
 from __future__ import annotations
 
@@ -87,6 +88,16 @@ NO_TRADE = "체결이 오지 않습니다"
 FEED_LOST = "시세 연결이 끊긴 것 같습니다 — 실행을 멈췄다 재개해 주세요"
 #: 「확인 필요」 동안 시세를 보지 않았던 공백을 확인 뒤에 적는 말(`after_attention`).
 ATTENTION_GAP = "확인을 기다리는 동안 시세를 받지 않았습니다"
+
+#: 끝을 모르는 단일가 구간의 끝(밀리초). 「계속」입니다. 세션 판정이 품목을 모를 때
+#: 실행 목록이 `(0, AUCTION_FOREVER)` 를 넘깁니다(`pump._auction_now`).
+AUCTION_FOREVER = 2**62
+#: 종가 단일가로 세션이 끝난 뒤 그 체결을 기다리는 시간(초). 이 안에 체결이 오면
+#: 세션 끝 봉에 담고 닫고, 안 오면 마지막 체결가로 닫습니다(`close_session`).
+#: 국내 주간 실시간 기록 한 번(2026-10-30)에서는 종가 단일가 체결이 세션 끝 신호 뒤
+#: 약 0.1초에 들어왔습니다. 표본이 하루치라 넉넉히 둡니다. 이보다 늦게 온 체결은
+#: 닫힌 봉에 들지 않고 늦은 체결로 다룹니다(`RunEngine._late_trade`).
+CLOSING_PRINT_WAIT_SECONDS = 10
 
 #: 청산이 왜 나갔는지. 화면이 그대로 적습니다.
 #:
@@ -320,6 +331,16 @@ class RunEngine:
         self.probe_asked = False
         #: 「확인 필요」 동안 든 공백이라 아직 사건으로 적지 않았는지(`_gap`).
         self._gap_unsaid = False
+        #: 지금 들어 있는 단일가 구간 `[시작, 끝)`(`set_auction`). 그 구간 안에서는
+        #: 체결이 없어도 공백으로 보지 않습니다. 아니면 `None` 입니다.
+        self._auction_now: tuple[int, int] | None = None
+        #: 마지막으로 든 단일가 구간의 끝. 체결 없는 시간을 이 시각부터 셉니다(`tick_clock`).
+        self._quiet_floor = 0
+        #: 세션 끝 마감을 종가 단일가 체결까지 미루는 중이면 그 기한(`close_session`).
+        self._close_due: int | None = None
+        #: 방금 세션 마감으로 닫힌 칸 `(거래일 0시, 창, 마감한 시각)`. 그
+        #: 칸으로 늦게 온 체결은 새 봉을 열지 않습니다(`_late_trade`). 아니면 `None`.
+        self._late: tuple[int, str, int] | None = None
         #: 구독을 NH선물 쪽에 다시 걸어 달라는 표지. 재개할 때 답니다 — 서버에서
         #: 조용히 끊긴 구독은 멈췄다 재개하는 것만으로는 되살아나지 않습니다.
         self.refresh_wanted = False
@@ -474,9 +495,13 @@ class RunEngine:
 
         **끝난 실행은 받지 않습니다.** 봉·조건 표·곡선·기록이 끝난 그 자리에 멈춰
         있어야 합니다(펌프도 끝난 실행에는 시세를 넘기지 않습니다).
+
+        **닫힌 세션의 늦은 체결은 마지막 체결가만 고칩니다**(`_late_trade`).
         """
         with self.lock:
             if self.run.state == runs.ENDED:
+                return
+            if self._late_trade(trade, context, at):
                 return
             self.last_trade_at = at
             if self.feed == GAP:
@@ -507,6 +532,45 @@ class RunEngine:
                 self._close_bars(self.bars.add(trade, context), at)
             finally:
                 self._held_at_close = None
+            if self._close_due is not None:
+                # 세션 끝 마감을 기다리던 종가 단일가 체결입니다. 방금 봉에 담았으니
+                # 이제 닫습니다.
+                self._finish_close(at)
+
+    def _late_trade(self, trade: dict[str, Any], context: str, at: int) -> bool:
+        """세션 마감으로 닫힌 칸에 늦게 온 체결이면 값만 적고 참을 냅니다.
+
+        국내 세션이 끝난 뒤 **같은 거래일·같은 창**으로 오고, 체결 시각이 마감한
+        시각 이전인 체결입니다 — 종가 단일가 체결이 세션 끝 신호보다 늦게 들어오는
+        때가 그렇습니다. 그대로 봉에 넣으면 이미 닫힌 거래일 칸(분봉은 세션 끝
+        시각의 칸)에 체결 하나짜리 봉이 새로 서고, 다음 세션 첫 체결에서 닫혀 판정까지
+        받습니다 — 일봉이면 같은 날이 지표에 두 번 들어갑니다. 닫힌 봉은 고쳐 쓰지
+        않습니다. 이미 판정한 봉입니다.
+
+        **적는 것은 수신 시각과 마지막 체결가뿐**입니다. 봉·종이 채움·손절·익절
+        감시·공백 풀기·미룬 주문 내기는 하지 않습니다 — 세션이 닫힌 뒤의 일이라
+        다음 세션 첫 체결이 맡습니다.
+
+        **표지는 그 칸 밖의 체결이 오면 거둡니다** — 다른 거래일·다른 창의 체결,
+        또는 마감한 시각 뒤에 체결된 것입니다. 다음 세션의 장 시작 단일가 체결은
+        다른 칸이라 새 봉을 열고, 시간표가 틀려 장중에 세션을 닫은 날에도 그 뒤의
+        체결은 평소대로 받습니다(그날의 봉은 지금처럼 다시 섭니다).
+        """
+        late = self._late
+        if late is None:
+            return False
+        when = _int(trade.get("timestamp"))
+        if when is None:
+            return False
+        day, window, closed_at = late
+        if context != window or when > closed_at or bar_lib.day_slot_of(when, context) != day:
+            self._late = None
+            return False
+        self.last_trade_at = at
+        price = _float(trade.get("price"))
+        if price is not None:
+            self.book.last_price = price
+        return True
 
     def on_book(self, book: dict[str, Any], *, at: int) -> None:
         """호가 한 벌. 시장가와 도착한 지정가가 여기서 채워집니다.
@@ -679,11 +743,26 @@ class RunEngine:
             self._gap(at, "연결이 끊겼습니다")
 
     def tick_clock(self, at: int) -> None:
-        """시계만 흐른 순간. 마지막 체결이 오래됐으면 공백으로 봅니다."""
+        """시계만 흐른 순간. 마지막 체결이 오래됐으면 공백으로 봅니다.
+
+        **단일가 구간(장 시작·종가 동시호가) 안에서는 공백으로 보지 않습니다.** 그
+        동안은 주문만 모이고 체결이 나지 않는 것이 정상입니다 — 공백으로 보면 종가
+        단일가가 끝나는 세션 끝 봉이 「공백」으로 닫혀 판정되지 않습니다. 구간이
+        끝나면 **그 끝에서부터** 체결 없는 시간을 다시 셉니다. 연결이 끊긴 것은
+        구간 안이어도 공백입니다(`on_status`).
+
+        세션 끝 마감을 종가 단일가 체결까지 미루는 중이면(`close_session`) 기한이
+        지났을 때 여기서 닫습니다.
+        """
         with self.lock:
+            if self._close_due is not None and at >= self._close_due:
+                self._finish_close(at)
             if self.feed == GAP or not self.last_trade_at:
                 return
-            if at - self.last_trade_at >= self.gap_ms:
+            span = self._auction_now
+            if span is not None and span[0] <= at < span[1]:
+                return
+            if at - max(self.last_trade_at, self._quiet_floor) >= self.gap_ms:
                 self._gap(at, NO_TRADE)
                 self.quiet_since = at
                 self.probe_asked = False
@@ -718,17 +797,68 @@ class RunEngine:
         어긋난 것으로 잡습니다(`service.reconcile`). **상태도 그대로 둡니다** —
         나가 있는 주문을 기다리는 자리가 맞고, 그 주문이 다음 세션에 채워지면
         `(entering, entry-filled)` 로 보유가 됩니다.
+
+        **일봉이 종가 단일가로 끝나면 그 체결을 기다렸다 닫습니다.** 종가 단일가는
+        세션 끝 시각에 한 번 체결되고, 그 체결은 세션 끝 신호보다 조금 늦게 들어올
+        수 있습니다. 바로 닫으면 그 거래일 봉의 종가가 단일가 전 마지막 체결가가
+        되고, 늦게 온 체결은 닫힌 봉 밖에 남습니다. 그래서 구간이 끝난 뒤 체결을
+        아직 못 받았으면 첫 체결이 봉에 담길 때까지, 길어야
+        `CLOSING_PRINT_WAIT_SECONDS` 동안 마감을 미룹니다. 못 받으면 그 뒤 마지막
+        체결가로 닫습니다. 미루는 동안 종이 장부는 단일가 구간으로 두어 채우지
+        않습니다. 분봉은 기다리지 않습니다.
         """
         with self.lock:
+            if self._close_due is not None:
+                return
             # 미룬 일봉 주문은 **바로 다음 세션까지**만 삽니다. 그 세션에 못 냈으면
             # (개장 시각을 못 받은 날 등) 며칠 묵은 신호가 주문이 되지 않게 버립니다.
             # 이 마감에서 새로 걸리는 것은 아래 판정이 다시 담습니다.
             for purpose in list(self._deferred):
                 del self._deferred[purpose]
                 self._drop(at, WHY_DEFERRED_EXPIRED)
+            if self._awaits_closing_print(at):
+                self._close_due = int(at) + CLOSING_PRINT_WAIT_SECONDS * 1000
+                if hasattr(self.book, "auction"):
+                    self.book.auction = (self._auction_now[0], self._close_due)
+                return
+            self._finish_close(at)
+
+    def _awaits_closing_print(self, at: int) -> bool:
+        """세션 끝 마감을 종가 단일가 체결까지 미룰지(`close_session`).
+
+        일봉이고, 열린 봉이 있고, 방금 끝난 단일가 구간 안에 들어 있다가 그 끝에서
+        세션이 닫혔고, 구간이 끝난 뒤의 체결을 아직 못 받았을 때입니다. 시세가
+        끊긴 동안에는 기다리지 않습니다.
+        """
+        span = self._auction_now
+        if not self.bars.daily or self.bars.open_bar is None or self.feed == GAP:
+            return False
+        if span is None or not span[1] <= at < span[1] + CLOSING_PRINT_WAIT_SECONDS * 1000:
+            return False
+        return self.last_trade_at < span[1]
+
+    def _finish_close(self, at: int) -> None:
+        """세션 끝 마감의 나머지. 열린 봉을 닫아 판정하고 주문·예약을 거둡니다."""
+        with self.lock:
+            if self._close_due is not None:
+                self._close_due = None
+                if hasattr(self.book, "auction"):
+                    # 미루는 동안 늘려 둔 단일가 구간을 거둡니다. 세션이 닫혀 실행
+                    # 목록도 다음 박자에 구간 없음을 넘깁니다.
+                    self.book.auction = None
+            closed = self.bars.close()
+            if closed and self.run.market == "domestic":
+                # 이 칸으로 늦게 오는 체결은 새 봉을 열지 않습니다(`_late_trade`). 이
+                # 앱이 아는 종가 단일가는 국내뿐입니다(`pump._auction_now`).
+                window = self.bars.sessions[-1]
+                self._late = (
+                    bar_lib.day_slot_of(closed[-1].timestamp, window),
+                    window,
+                    int(at),
+                )
             self._closing_session = True
             try:
-                self._close_bars(self.bars.close(), at)
+                self._close_bars(closed, at)
             finally:
                 self._closing_session = False
             # 그 거래일의 잔고 줄. 방금 닫은 봉까지의 값입니다.
@@ -2216,11 +2346,33 @@ class RunEngine:
             return self.run.model
         return sim.MODEL if self.run.mode in runs.ACCOUNT_MODES else paper.MODEL
 
-    def set_auction(self, span: tuple[int, int] | None) -> None:
-        """단일가 구간 `[시작, 끝)`(밀리초)을 알려 줍니다. 종이 장부만 그 시각의 체결을 미룹니다(`paper` 가정 8)."""
+    def set_auction(self, span: tuple[int, int] | None, *, at: int | None = None) -> None:
+        """단일가 구간 `[시작, 끝)`(밀리초)을 알려 줍니다. 종이 장부만 그 시각의 체결을 미룹니다(`paper` 가정 8).
+
+        `at` 을 주면 **그 시각이 구간 안일 때** 지금 단일가 중인 것으로 적습니다 —
+        체결 없는 시간을 공백으로 보지 않는 자리입니다(`tick_clock`). 거래 창에서
+        받는 다음 경계부터의 구간이나, 끝을 모르는 구간(품목을 몰라 `(0,
+        AUCTION_FOREVER)` 로 온 것 포함)은 지금 구간으로 적지 않습니다 — 그때는
+        공백을 지금처럼 겁니다.
+
+        세션 끝 마감을 종가 단일가 체결까지 미루는 중에는 받지 않습니다 — 미루는
+        동안의 구간은 엔진이 듭니다(`close_session`).
+        """
         with self.lock:
+            if self._close_due is not None:
+                return
             if hasattr(self.book, "auction"):
                 self.book.auction = span
+            if at is None:
+                return
+            now = (
+                span
+                if span is not None and 0 < span[0] <= at < span[1] < AUCTION_FOREVER
+                else None
+            )
+            self._auction_now = now
+            if now is not None:
+                self._quiet_floor = now[1]
 
     def on_limits(self, upper: Any, lower: Any) -> None:
         """실시간 상한가·하한가. 수가 아니면 그 값은 그대로 둡니다(`paper` 가정 8)."""
