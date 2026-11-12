@@ -174,6 +174,52 @@ def test_FOK_은_전량이_안_되면_채운_것도_되돌린다(장부):
     assert "FOK" in 주문.reason
 
 
+def _FOK(장부, name: str, side: str, at: int, price: float = 101.0, quantity: int = 5):
+    return 장부.place(name, side=side, quantity=quantity, order_type="지정가", price=price,
+                    fill_condition="FOK", at=at)
+
+
+@pytest.mark.parametrize("쪽", [paper.BUY, paper.SELL])
+def test_FOK_취소는_호가_잔량을_쓴_것으로_남기지_않는다(장부, 쪽):
+    """먹어 보고 되돌리면 그 가격의 먹은 몫이 남아, 잔량이 늘어도 다음 FOK 가 또 취소됐습니다."""
+    def 그쪽(levels):
+        return _호가(levels, [(100.0, 9)]) if 쪽 == paper.BUY else _호가([(102.0, 9)], levels)
+
+    처음 = _FOK(장부, "o1", 쪽, 기준)
+    장부.on_book(그쪽([(101.0, 3)]), at=기준 + 지연)
+    assert (처음.status, 처음.filled) == (paper.CANCELLED, 0)
+    assert 장부._eaten == {}, "0체결 취소는 아무것도 먹지 않은 것입니다."
+
+    다음 = _FOK(장부, "o2", 쪽, 기준 + 1_000)
+    채운것 = 장부.on_book(그쪽([(101.0, 5)]), at=기준 + 1_000 + 지연)
+
+    assert [(one["price"], one["quantity"]) for one in 채운것] == [(101.0, 5)]
+    assert 다음.status == paper.FILLED
+
+
+def test_FOK_은_전량이_되면_여러_단계를_먹는다(장부):
+    주문 = _FOK(장부, "o1", paper.BUY, 기준, price=102.0)
+
+    채운것 = 장부.on_book(_호가([(101.0, 2), (102.0, 3), (103.0, 9)], [(100.0, 5)]), at=기준 + 지연)
+
+    assert [(one["price"], one["quantity"]) for one in 채운것] == [(101.0, 2), (102.0, 3)]
+    assert 주문.status == paper.FILLED
+    assert 장부._eaten == {(paper.BUY, 101.0): [2, 2], (paper.BUY, 102.0): [3, 3]}
+
+
+def test_FOK_은_앞서_먹은_몫을_빼고_세고_그_기억을_고치지_않는다(장부):
+    """시장가가 먼저 먹은 몫은 같은 호가가 그대로인 동안 다시 먹을 수 없습니다(가정 6)."""
+    장부.place("m1", side=paper.BUY, quantity=2, order_type="시장가", at=기준)
+    장부.on_book(_호가([(101.0, 3)], [(100.0, 9)]), at=기준 + 지연)
+    assert 장부._eaten == {(paper.BUY, 101.0): [3, 2]}
+
+    주문 = _FOK(장부, "o1", paper.BUY, 기준 + 1_000, quantity=2)
+    채운것 = 장부.on_book(_호가([(101.0, 3)], [(100.0, 9)]), at=기준 + 1_000 + 지연)
+
+    assert 채운것 == [] and (주문.status, 주문.filled) == (paper.CANCELLED, 0)
+    assert 장부._eaten == {(paper.BUY, 101.0): [3, 2]}, "남은 1 만 보고 취소했고, 기억은 그대로입니다."
+
+
 def test_FAK_은_되는_만큼_채우고_잔량을_취소한다(장부):
     주문 = 장부.place(
         "o1",

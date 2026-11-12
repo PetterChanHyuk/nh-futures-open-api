@@ -24,6 +24,8 @@
    가격마다 기억해 두고, 같은 잔량이 다음 호가에 다시 보여도 먹은 몫은 빼고
    먹습니다. 그 가격의 잔량이 줄었거나(실제 체결로 소진) 호가에서 빠지면 기억을
    지웁니다. 안 그러면 호가가 그대로인 동안 같은 잔량을 몇 번이고 먹습니다.
+   FOK 가 전량이 안 돼 취소되면 **아무것도 먹지 않은 것**입니다 — 먹을 수 있는
+   양을 먼저 세어 보고 전량이 될 때만 먹습니다.
 7. **관통해도 지난 체결 수량만큼만** — 이 주문의 가격을 지난 체결이 와도 그 체결의
    수량에서 앞 순위(`Q`)를 먼저 깎고 남는 만큼만 채웁니다. 「가격이 넘었으니
    전부」는 얇은 장에서 실제보다 많이 채웁니다.
@@ -63,6 +65,7 @@
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -336,15 +339,15 @@ class PaperBook:
             return []
 
         taking = asks if order.side == BUY else bids
-        made = self._eat(order, taking, limit, at)
-
-        if order.remaining and order.fill_condition == FILL_ALL_OR_NONE:
-            # 전량이 안 되면 없던 일로 합니다 — 채운 것까지 되돌립니다.
-            order.filled = 0
-            order.fills.clear()
+        if order.fill_condition == FILL_ALL_OR_NONE and self._room(order, taking, limit) < order.remaining:
+            # 전량이 안 되면 없던 일로 합니다. **먹어 보기 전에 셉니다** — 먹고 나서
+            # 주문만 되돌리면 그 가격의 먹은 몫(가정 6)이 남아, 같은 가격의 다음
+            # 주문이 잔량이 충분해도 그 몫만큼 덜 먹고 취소됩니다.
             order.status = CANCELLED
             order.reason = "FOK — 주문 즉시 전량 체결되지 않아 취소했습니다"
             return []
+        made = self._eat(order, taking, limit, at)
+
         if order.remaining and order.fill_condition == FILL_AND_KILL:
             order.status = CANCELLED
             order.reason = "FAK — 주문 즉시 채워지지 않은 잔량을 취소했습니다"
@@ -390,21 +393,44 @@ class PaperBook:
     ) -> list[dict[str, Any]]:
         """반대 호가를 가까운 단계부터 표시 잔량만큼 먹습니다."""
         made: list[dict[str, Any]] = []
+        for price, shown, take in list(self._takes(order, levels, limit)):
+            held = self._eaten.setdefault((order.side, price), [shown, 0])
+            held[1] += take
+            made.append(self._fill(order, price, take, at))
+        return made
+
+    def _room(
+        self, order: PaperOrder, levels: list[tuple[float, int]], limit: float | None
+    ) -> int:
+        """지금 먹을 수 있는 수량. **장부를 건드리지 않습니다** — FOK 가 먹기 전에 셉니다."""
+        return sum(take for _price, _shown, take in self._takes(order, levels, limit))
+
+    def _takes(
+        self, order: PaperOrder, levels: list[tuple[float, int]], limit: float | None
+    ) -> Iterator[tuple[float, int, int]]:
+        """먹을 단계마다 `(가격, 표시 잔량, 먹을 수량)`. 먹는 것(`_eat`)과 세는 것(`_room`)이 함께 씁니다.
+
+        가까운 단계부터, 지정가면 그 값을 넘는 단계 앞에서 멈춥니다. 이미 먹은
+        몫(가정 6)은 빼고 셉니다. 여기서는 기억을 고치지 않습니다.
+        """
+        left = order.remaining
+        used: dict[float, int] = {}
         for price, shown in levels:
-            if order.remaining <= 0:
+            if left <= 0:
                 break
             if limit is not None:
                 if order.side == BUY and price > limit:
                     break
                 if order.side == SELL and price < limit:
                     break
-            held = self._eaten.setdefault((order.side, price), [shown, 0])
-            take = min(shown - held[1], order.remaining)
+            held = self._eaten.get((order.side, price))
+            eaten = (held[1] if held else 0) + used.get(price, 0)
+            take = min(shown - eaten, left)
             if take <= 0:
                 continue
-            held[1] += take
-            made.append(self._fill(order, price, take, at))
-        return made
+            used[price] = used.get(price, 0) + take
+            left -= take
+            yield price, shown, take
 
     def _forget_eaten(self, side: str, levels: list[tuple[float, int]]) -> None:
         """새 호가에서 먹은 몫의 기억을 고칩니다(가정 6).
