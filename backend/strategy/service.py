@@ -53,6 +53,7 @@ WHY_NOT_FOUND = "그 실행을 찾지 못했습니다."
 WHY_HOLDING = "보유가 남아 있어 끝낼 수 없습니다. 먼저 청산해 주세요."
 WHY_NOT_ENDED = "끝난 실행만 지울 수 있습니다."
 WHY_NOTHING = "닫을 보유가 없습니다."
+WHY_EXIT_WORKING = "청산 주문이 이미 나가 있습니다. 그 주문이 체결되기를 기다려 주세요."
 
 # 시작할 수 없는 값에 하는 말. 저장할 때와 같은 규약으로 냅니다 — 화면이 한
 # 갈래로 읽습니다(`validate.problems` 와 같은 `{field, severity, message}`).
@@ -856,15 +857,29 @@ class RunService:
         return self._row(run_id, engine=made)
 
     def flatten(self, run_id: str, at: int) -> dict[str, Any]:
-        """보유를 전부 닫습니다. 시장가 전량이고 진입 규칙은 그동안 발사하지 않습니다."""
+        """보유를 전부 닫습니다. 시장가 전량이고 진입 규칙은 그동안 발사하지 않습니다.
+
+        **이미 나가 있는 청산 주문의 남은 수량은 빼고 냅니다**(`open_exit`). 빼지
+        않으면 첫 청산이 체결되기 전에 다시 청산했을 때 같은 수량이 한 번 더 나가고,
+        둘 다 체결되면 반대 보유가 생깁니다. 계좌 실행이면 그 주문이 계좌로 두 번
+        나갑니다.
+
+        나가 있는 청산이 보유를 다 덮으면 새로 내지 않고 `WHY_EXIT_WORKING` 으로
+        막습니다. 그때도 **반전 예약은 버립니다** — 청산은 「닫고 끝낸다」는 뜻이라,
+        나가 있던 반대 신호 청산이 체결된 뒤 반전 진입이 붙으면 안 됩니다.
+        """
         made = self._engine(run_id)
         self._quiet(made)
         with made.lock:
             held = made.ledger.position
             if held.side is None:
                 raise StrategyRunError(WHY_NOTHING)
+            left = held.size - made.open_exit
+            if left <= 0:
+                made._drop_reverse(at)
+                raise StrategyRunError(WHY_EXIT_WORKING)
             last = made.book.last_price or held.avg_price
-            made._close(held.size, last, engine_lib.FLATTEN, at)
+            made._close(left, last, engine_lib.FLATTEN, at)
         self._after(made, at, "선택 전략 청산을 냈습니다")
         return self._row(run_id, engine=made)
 

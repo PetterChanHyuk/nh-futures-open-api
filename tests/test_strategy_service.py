@@ -293,6 +293,102 @@ def test_청산하면_시장가_전량_의도가_나간다(실행목록):
     assert 돌리는것.run.state == runs.EXITING
 
 
+def _호가_한_벌(엔진, at: int) -> None:
+    """양쪽 잔량이 넉넉한 호가. 종이 시장가가 지연 뒤 여기서 채워집니다."""
+    엔진.on_book(
+        {"asks": [{"price": 400.05, "quantity": 9}], "bids": [{"price": 400.0, "quantity": 9}]},
+        at=at,
+    )
+
+
+def test_청산이_나가_있으면_다시_청산해도_새로_내지_않는다(실행목록):
+    """첫 청산이 체결되기 전에 또 받으면 같은 수량이 한 번 더 나가 반대 보유가 생겼습니다."""
+    실행목록.add(**_물음())
+    돌리는것 = 실행목록._engine("run1")
+    돌리는것.ledger.add({"side": paper.BUY, "quantity": 1, "price": 400.0, "time": 1})
+    돌리는것.run.state = runs.HOLDING
+    실행목록.flatten("run1", 10)
+
+    with pytest.raises(service_lib.StrategyRunError) as 터짐:
+        실행목록.flatten("run1", 20)
+
+    assert str(터짐.value) == service_lib.WHY_EXIT_WORKING
+    assert [(one.side, one.quantity) for one in 돌리는것.book.open_orders] == [(paper.SELL, 1)]
+
+    _호가_한_벌(돌리는것, 20 + int(paper.DELAY_SECONDS * 1000) + 1)
+
+    assert 돌리는것.ledger.position.quantity == 0, "반대 보유가 생기지 않습니다."
+    assert 돌리는것.run.state == runs.ARMED
+
+
+def test_부분_체결된_청산의_남은_수량도_나가_있는_것으로_센다(실행목록):
+    실행목록.add(**_물음())
+    돌리는것 = 실행목록._engine("run1")
+    돌리는것.ledger.add({"side": paper.BUY, "quantity": 1, "price": 400.0, "time": 1})
+    나오는것 = 돌리는것.book.place("나오는것", side=paper.SELL, quantity=2,
+                              order_type=paper.MARKET_ORDER, at=0)
+    나오는것.filled = 1  # 2계약 중 1계약이 채워져 1계약을 들고 있는 자리
+    돌리는것._purpose["나오는것"] = "exit"
+    돌리는것.run.state = runs.EXITING
+
+    with pytest.raises(service_lib.StrategyRunError) as 터짐:
+        실행목록.flatten("run1", 10)
+
+    assert str(터짐.value) == service_lib.WHY_EXIT_WORKING
+    assert [one.id for one in 돌리는것.book.open_orders] == ["나오는것"]
+
+
+def test_나가_있는_청산이_모자라면_모자란_수량만_시장가로_낸다(실행목록):
+    """청산이 나간 뒤 진입 잔량이 채워져 보유가 늘어난 자리입니다."""
+    실행목록.add(**_물음())
+    돌리는것 = 실행목록._engine("run1")
+    돌리는것.ledger.add({"side": paper.BUY, "quantity": 3, "price": 400.0, "time": 1})
+    돌리는것.book.place("나오는것", side=paper.SELL, quantity=1, order_type="지정가",
+                     price=9_999.0, at=0)
+    돌리는것._purpose["나오는것"] = "exit"
+    돌리는것.run.state = runs.EXITING
+
+    실행목록.flatten("run1", 10)
+
+    assert [(one.id, one.side, one.quantity, one.order_type) for one in 돌리는것.book.open_orders] == [
+        ("나오는것", paper.SELL, 1, "지정가"),
+        ("run1-2", paper.SELL, 2, paper.MARKET_ORDER),
+    ]
+
+
+def test_청산을_막아도_반전_예약은_버린다(실행목록):
+    """청산은 닫고 끝낸다는 뜻이라, 나가 있던 반대 신호 청산 뒤에 반전 진입이 붙으면 안 됩니다."""
+    실행목록.add(**_물음())
+    돌리는것 = 실행목록._engine("run1")
+    돌리는것.ledger.add({"side": paper.BUY, "quantity": 1, "price": 400.0, "time": 1})
+    돌리는것.book.place("나오는것", side=paper.SELL, quantity=1, order_type=paper.MARKET_ORDER, at=0)
+    돌리는것._purpose["나오는것"] = "exit"
+    돌리는것._reverse = {"order": "나오는것", "side": paper.SELL, "rule": "sellEntry"}
+    돌리는것.run.state = runs.EXITING
+
+    with pytest.raises(service_lib.StrategyRunError):
+        실행목록.flatten("run1", 10)
+
+    assert 돌리는것._reverse is None
+    assert len(돌리는것.book.open_orders) == 1
+
+
+def test_청산_라우트를_두_번_부르면_두_번째는_400_이다(손님):
+    앱, 실행목록 = 손님
+    실행목록.add(**_물음())
+    돌리는것 = 실행목록._engine("run1")
+    돌리는것.ledger.add({"side": paper.BUY, "quantity": 1, "price": 400.0, "time": 1})
+    돌리는것.run.state = runs.HOLDING
+
+    처음 = 앱.post(f"{주소}/run1/close")
+    다시 = 앱.post(f"{주소}/run1/close")
+
+    assert 처음.status_code == 200
+    assert 다시.status_code == 400
+    assert 다시.json()["detail"]["message"] == service_lib.WHY_EXIT_WORKING
+    assert len(돌리는것.book.open_orders) == 1
+
+
 def test_닫을_보유가_없으면_청산하지_않는다(실행목록):
     실행목록.add(**_물음())
 

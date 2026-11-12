@@ -128,6 +128,27 @@ def test_선택_전략_청산이_빈_체결조건으로_거부되지_않는다(�
     assert 엔진.run.state == runs.EXITING, "확인 필요로 내려앉지 않습니다."
 
 
+def test_계좌_실행도_청산이_나가_있으면_다시_청산해도_계좌로_또_내지_않는다(국내몸, tmp_path):
+    """첫 청산이 체결되기 전에 또 받으면 같은 주문이 계좌로 한 번 더 나가던 자리입니다."""
+    from backend.strategy import service as service_lib
+    from tests.test_strategy_service import _모의목록, _모의물음
+
+    실행목록 = _모의목록(tmp_path, sender=sim.NhSender())
+    실행목록.add(**_모의물음())
+    엔진 = 실행목록._engine("run1")
+    엔진.book.last_price = 400.0
+    _보유(엔진)
+    실행목록.flatten("run1", 20)
+
+    with pytest.raises(service_lib.StrategyRunError) as 터짐:
+        실행목록.flatten("run1", 30)
+
+    assert str(터짐.value) == service_lib.WHY_EXIT_WORKING
+    (몸,) = 국내몸
+    assert 몸["ord_qty"] == "1"
+    assert 엔진.run.state == runs.EXITING
+
+
 # ── 시작 검사: 국내 실행의 빈 체결조건 ─────────────────────
 #
 # 국내 주문은 체결조건이 꼭 있어야 합니다. 저장은 빈 칸을 받아 줍니다. 계좌 실행도
