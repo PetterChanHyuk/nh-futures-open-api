@@ -138,7 +138,10 @@ ENTRY_STATES = frozenset({ARMED, HOLDING})
 EXIT_STATES = frozenset({ENTERING, HOLDING, PAUSED})
 
 #: 손절·익절을 **틱마다 보는** 상태. 청산 주문이 나가 있으면 그 주문이 곧 감시입니다.
-WATCH_STATES = frozenset({HOLDING, PAUSED})
+#:
+#: **진입 주문 중도 듭니다.** 들고 있는 채로 더 들어가는 동안(추가 진입) 앞서 든
+#: 수량은 이미 손익이 움직이고 있습니다. 들고 있는 것이 없으면 볼 것도 없습니다.
+WATCH_STATES = frozenset({ENTERING, HOLDING, PAUSED})
 
 #: **어떤 요청도 내지 않는 상태**. 확인이 필요한 실행에는 사용자가
 #: 「확인」을 누를 때까지, 대사 중인 실행에는 계좌와 맞춰 볼 때까지 주문도
@@ -187,7 +190,12 @@ TRANSITIONS: dict[tuple[str, str], str] = {
     (PAUSED, RECONCILE): RECONCILING,
     (ARMED, ENTRY_SENT): ENTERING,
     (ENTERING, ENTRY_FILLED): HOLDING,
+    # 일부만 채워져도 **들고 있으면 보유 중**입니다 — 남은 수량이 걸려 있어도 든
+    # 수량에는 손절·익절이 붙어야 합니다. 대사 뒤 상태와 같은 규칙입니다
+    # (`Run.keep_after_reconcile`).
     (ENTERING, ENTRY_PARTIAL): HOLDING,
+    # 감시 중에 늦게 온 체결(취소가 닿기 전에 채워진 진입의 남은 수량)도 같습니다.
+    (ARMED, ENTRY_PARTIAL): HOLDING,
     (ENTERING, ENTRY_CANCELLED): ARMED,
     (ENTERING, EXIT_SENT): EXITING,
     (HOLDING, ENTRY_SENT): ENTERING,

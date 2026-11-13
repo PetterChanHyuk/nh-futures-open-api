@@ -906,11 +906,11 @@ def test_한_주문이_나눠_채워지면_평균가에서_출발한다():
     assert _청산_까닭(엔진) == engine.TRAIL_STOP
 
 
-def test_진입_주문이_시간을_두고_나눠_채워져도_평균가에서_출발한다():
-    """두 조각이 따로 온 호가에서 채워집니다. 그 사이의 체결은 기준에 들지 않습니다.
+def test_진입_주문이_시간을_두고_나눠_채워지면_첫_조각부터_평균가에서_출발한다():
+    """두 조각이 따로 온 호가에서 채워집니다. **첫 조각부터 보유 중이라 감시합니다.**
 
-    첫 조각 뒤에는 기준이 비어 있고, 둘째 조각(같은 방향)이 와도 「더 유리할
-    때만」 비교가 빈 기준을 건드리지 않습니다 — 첫 감시가 평균가로 세웁니다.
+    첫 감시는 그때의 평균가(첫 조각 101.5)에서 출발합니다. 둘째 조각(같은 방향)이
+    평균가를 올리면 「더 유리할 때만」 규칙대로 기준을 새 평균가로 옮깁니다(`_follow`).
     """
     엔진 = _엔진(_설정(stopTicks="10", takeTicks="100", trailTicks="2"), qty=2)
     _넣기(엔진, 0, 99.0)
@@ -918,15 +918,15 @@ def test_진입_주문이_시간을_두고_나눠_채워져도_평균가에서_�
     _넣기(엔진, 2, 101.0)
     때 = _때(10, 2) + 지연
     엔진.on_book(_호가(101.5, 101.0, quantity=1), at=때)
-    assert 엔진.ledger.position.quantity == 1 and 엔진.run.state == runs.ENTERING
+    assert 엔진.ledger.position.quantity == 1 and 엔진.run.state == runs.HOLDING
     assert 엔진._trail_best is None
 
-    _틱(엔진, 때 + 10, 101.9)  # 진입 중에는 감시하지 않습니다.
-    assert 엔진._trail_best is None
+    _틱(엔진, 때 + 10, 101.55)  # 첫 감시 — 평균가 101.5 에서 출발해 101.55 로 오릅니다.
+    assert 엔진._trail_best == pytest.approx(101.55)
 
     엔진.on_book(_호가(101.7, 101.0, quantity=1), at=때 + 20)
     assert 엔진.ledger.position.quantity == 2 and 엔진.run.state == runs.HOLDING
-    assert 엔진._trail_best is None
+    assert 엔진._trail_best == pytest.approx(101.6), "새 평균가가 더 유리합니다."
 
     _틱(엔진, 때 + 30, 101.55)
     assert 엔진._trail_best == pytest.approx(101.6)

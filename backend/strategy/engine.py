@@ -156,6 +156,9 @@ REFUSED = "refused"
 #: 주문 거부로 실행을 중지하면서 열린 진입 주문을 거둘 때 그 주문에 적는 까닭.
 HALT_WITHDRAW_TEXT = "주문 거부로 중지하면서 취소했습니다"
 
+#: 청산을 내면서 남아 있던 진입 주문을 거둘 때 그 주문에 적는 까닭(`_close`).
+EXIT_WITHDRAW_TEXT = "청산을 내면서 남은 진입 주문을 취소했습니다"
+
 #: 진입 체결에 적는 까닭. 청산 넷과 **한 갈래의 값**입니다.
 ENTRY_REASON = "signal"
 
@@ -869,7 +872,7 @@ class RunEngine:
                     self._forget(order.id, at)
                     self._say(at, ORDER, f"세션이 끝나 주문을 취소했습니다({order.id})")
                 if self.run.state == runs.ENTERING:
-                    self._move(runs.ENTRY_CANCELLED, at)
+                    self._entry_over(at)
                 elif self.run.state == runs.EXITING:
                     self._move(runs.EXIT_CANCELLED, at)
             else:
@@ -2007,12 +2010,18 @@ class RunEngine:
         반대 신호가 아닌 청산(청산 규칙·손절·익절·추적·세션 끝·사용자 청산)을 내면
         걸려 있던 반전 예약을 버립니다 — 그 청산이 닫은 보유에 반전 진입이 붙지
         않게 합니다.
+
+        **나가 있는 진입 주문은 먼저 거둡니다**(부분 체결의 남은 수량, 추가 진입).
+        두면 청산한 뒤에 채워져 닫은 보유가 다시 섭니다. 계좌 갈래는 취소가
+        요청이라 닿기 전에 채워질 수 있는데, 그 수량은 청산이 다 못 닫은 보유로
+        남아 보유 중으로 돌아오거나(`_settle`) 늦은 체결로 보유 중이 됩니다(`_take`).
         """
         if reason != OPPOSITE_EXIT:
             self._drop_reverse(at)
         held = self.ledger.position
         if held.side is None or quantity <= 0:
             return None
+        self._withdraw_entries(at, EXIT_WITHDRAW_TEXT)
         side = _CLOSE_SIDE[held.side]
         self._exit_reason = reason
         if reason in (RULE_EXIT, OPPOSITE_EXIT):
@@ -2296,7 +2305,8 @@ class RunEngine:
         추적 청산의 기준(가장 유리했던 체결가)은 **여기서만** 올립니다 — 감시하지
         않는 상태이거나 시세가 끊긴 동안에는 들어온 값을 기준에 넣지 않습니다.
         청산 주문이 나가 있는 동안(`exiting`)도 감시하지 않으므로 두 번째 청산이
-        나가지 않습니다.
+        나가지 않습니다. 진입 주문이 나가 있어도 들고 있는 것이 있으면 봅니다
+        (`runs.WATCH_STATES`) — 닫을 때는 그 진입 주문을 먼저 거둡니다(`_close`).
         """
         if self.run.state not in runs.WATCH_STATES or self.feed == GAP:
             return
@@ -2543,7 +2553,7 @@ class RunEngine:
                     if self.book.cancel(order, "세션 끝 정리로 취소했습니다") and self.virtual:
                         self._forget(order.id, at)
                 if self.virtual and self.run.state == runs.ENTERING:
-                    self._move(runs.ENTRY_CANCELLED, at)
+                    self._entry_over(at)
                 self._say(at, SESSION, "세션 끝 정리 — 보유를 닫고 새로 들어가지 않습니다")
                 did = True
             held = self.ledger.position
@@ -2657,12 +2667,15 @@ class RunEngine:
                 continue
             self._write_order(found, self._cancel_wait.pop(order), at)
 
+        # 진입 주문이 일부만 채워졌으면(남은 수량은 아직 걸려 있음) 보유 중입니다 —
+        # 진입 주문 중에 두면 든 수량에 손절·익절이 붙지 않습니다. 감시 중에 늦게 온
+        # 체결로 보유가 생긴 것도 같습니다(`runs.TRANSITIONS`).
+        if made and self.ledger.position.quantity and self.run.state in (runs.ENTERING, runs.ARMED):
+            self._move(runs.ENTRY_PARTIAL, at)
+
     def _settle(self, purpose: str, order: paper.PaperOrder, at: int) -> None:
         if purpose == "entry":
-            if order.filled:
-                self._move(runs.ENTRY_FILLED, at)
-            else:
-                self._move(runs.ENTRY_CANCELLED, at)
+            self._entry_over(at)
             return
         if self.ledger.position.quantity == 0:
             self._exit_reason = ""
@@ -2675,6 +2688,16 @@ class RunEngine:
         self._move(runs.EXIT_CANCELLED, at)
         self._say(at, ORDER, f"청산이 다 안 됐습니다 — {self.ledger.position.size}계약 남았습니다")
         self._turn(order, at)
+
+    def _entry_over(self, at: int) -> None:
+        """진입 주문이 끝났을 때. **들고 있으면 보유 중**, 아니면 감시 중입니다.
+
+        그 주문이 채워졌는지가 아니라 장부를 봅니다 — 추가 진입이 하나도 안
+        채워지고 닫혀도 앞서 든 수량은 남아 있고, 감시 중으로 가면 손절도 세션 끝
+        청산도 그 수량을 보지 않습니다. 대사 뒤 상태(`runs.Run.keep_after_reconcile`)와
+        같은 규칙입니다.
+        """
+        self._move(runs.ENTRY_FILLED if self.ledger.position.quantity else runs.ENTRY_CANCELLED, at)
 
     @property
     def per_contract(self) -> float | None:
