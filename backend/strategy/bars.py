@@ -24,9 +24,18 @@
 봉이 **닫히는** 때는 둘입니다. 다음 봉 자리의 첫 체결이 오거나(`add`), 세션이
 끝나거나 시세가 끊기거나(`close`). 닫힌 봉만 판정에 씁니다 — 아직 값이 바뀌는
 봉으로 신호를 내면 같은 봉에서 신호가 섰다 사라집니다.
+
+## 일봉은 거래일 하나입니다
+
+국내는 달력 날짜로 셉니다(야간은 다음 날, `day_slot_of`). **해외는 시간표의 거래
+창이 시작한 날**입니다 — 한국 시각 자정을 넘기는 세션(07:00~익일 06:00 등)도 한
+봉이라, 자정에 봉이 닫혀 세션 한가운데서 판정하지 않습니다. 해외 거래일은 실행이
+넘겨 주고(`BarBuilder(day_of=...)`), 조회로 받는 해외 일봉의 날짜도 같은 세션
+날짜입니다.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -75,6 +84,9 @@ def day_slot_of(timestamp: int, context: str) -> int:
     국내 야간은 다음 날에 속합니다. 휴장일을 건너뛰지 않습니다 — 봉을 세우는
     데 쓰는 자리라 하루 앞뒤가 달라도 봉이 섞이지 않고, 달력 날짜만으로도
     야간과 그 다음 주간이 한 봉에 들어옵니다.
+
+    **해외 실시간 일봉은 이 값이 아니라 시간표의 거래일을 씁니다**(`BarBuilder` 의
+    `day_of`) — 달력 날짜로 끊으면 자정을 넘기는 세션이 두 봉이 됩니다.
     """
     moment = datetime.fromtimestamp(timestamp / 1000, tz=KST)
     day: date = moment.date()
@@ -96,13 +108,24 @@ class BarBuilder:
     주므로 실시간에서는 그렇습니다. 앞뒤가 뒤섞인 체결을 넣으면 지난 자리에
     봉이 새로 서서 봉 목록이 시각 순이 아니게 됩니다 — 기록 둘을 이어 붙여
     흘려 넣을 때가 그렇습니다.
+
+    `day_of` 는 체결 하나가 드는 **일봉 자리**(그 거래일의 0시, 밀리초)를 답하는
+    자리입니다. 해외 실행이 시간표의 거래일로 넘겨 줍니다(`engine.RunEngine`).
+    거래 창 밖이라 `None` 이면 열린 봉의 날을 잇습니다. 없으면 `day_slot_of` 입니다.
     """
 
-    def __init__(self, base_bar: str, *, limit: int = 2000) -> None:
+    def __init__(
+        self,
+        base_bar: str,
+        *,
+        limit: int = 2000,
+        day_of: Callable[[int, str], int | None] | None = None,
+    ) -> None:
         self.base_bar = str(base_bar or "").strip()
         self.minutes = minutes_of(self.base_bar)
         #: 담아 둘 봉 수. 지표가 보는 것은 앞쪽 몇백 봉뿐이라 무한정 들지 않습니다.
         self.limit = max(int(limit), 1)
+        self.day_of = day_of
         self.bars: list[Bar] = []
         #: 봉마다의 맥락. `bars` 와 길이가 같습니다.
         self.sessions: list[str] = []
@@ -238,9 +261,16 @@ class BarBuilder:
         return [at for at, one in enumerate(self.sessions) if one == session]
 
     def _slot_for(self, timestamp: int, context: str) -> int:
-        if self.minutes is None:
+        if self.minutes is not None:
+            return slot_of(timestamp, self.minutes)
+        if self.day_of is None:
             return day_slot_of(timestamp, context)
-        return slot_of(timestamp, self.minutes)
+        slot = self.day_of(timestamp, context)
+        if slot is not None:
+            return slot
+        # 거래 창 밖(정비·쉼)의 체결입니다. 열린 봉이 있으면 그 거래일을 잇습니다.
+        # 없으면 달력 날짜입니다 — 시간표가 틀려 장중 체결이 창 밖으로 읽혀도 봉은 섭니다.
+        return self._slot if self._open is not None else day_slot_of(timestamp, context)
 
     def _trim(self) -> None:
         if len(self.bars) <= self.limit:

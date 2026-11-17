@@ -179,3 +179,144 @@ def test_지난_봉_셈의_해외_거래일도_실행_엔진과_같은_답이다
 
     monkeypatch.setattr(backtest, "BacktestEngine", 그냥)
     assert 셈() == 빠른
+
+
+# ── 해외 일봉 ─────────────────────────────────────────────
+#
+# 해외 일봉은 시간표의 거래 창이 시작한 날로 묶습니다. 한국 시각 자정을 넘기는
+# 세션(CME 07:00~익일 06:00)도 한 봉이라 자정에 닫히지 않습니다.
+
+
+def _ms초(day: int, hour: int, minute: int, second: int) -> int:
+    return int(datetime(2026, 9, day, hour, minute, second, tzinfo=KST).timestamp() * 1000)
+
+
+def _일봉(day: int, close: float) -> dict:
+    return {"timestamp": _자정(day), "open": close, "high": close, "low": close, "close": close, "volume": 1}
+
+
+def _해외일봉엔진(contract=_CME, record=None) -> engine.RunEngine:
+    """「종가 > 100 이면 시장가 매수」 일봉 실행. 앞 이틀의 일봉(종가 99)을 깔아 둡니다."""
+    엔진 = _해외엔진(contract, draft={**_설정(), "baseBar": "일봉"}, record=record)
+    엔진.seed([_일봉(14, 99.0), _일봉(15, 99.0)], 해외)
+    return 엔진
+
+
+def _닫힌_날(엔진: engine.RunEngine) -> list[tuple[str, float]]:
+    return [
+        (datetime.fromtimestamp(one.timestamp / 1000, tz=KST).strftime("%d"), one.close)
+        for one in 엔진.bars.bars
+    ]
+
+
+def test_해외_일봉은_한국_자정에_닫히지_않고_주문도_내지_않는다():
+    엔진 = _해외일봉엔진()
+    엔진.note_open(해외, _ms(16, 7, 0))
+
+    _틱(엔진, _ms초(16, 23, 59, 59), 100.5)
+    _틱(엔진, _ms초(17, 0, 0, 1), 101.0)
+
+    assert _닫힌_날(엔진) == [("14", 99.0), ("15", 99.0)], "16일 세션은 아직 안 끝났습니다."
+    assert 엔진.bars.open_bar.timestamp == _자정(16) and 엔진.bars.open_bar.close == 101.0
+    assert 엔진.book.orders == [], "닫히지 않은 봉으로 판정하지 않습니다."
+    assert 엔진.run.day_key == _자정(16), "거래일 열쇠가 앞 날로 돌아가지 않습니다."
+
+
+def test_해외_일봉은_세션_끝에서_닫혀_판정하고_다음_세션에_낸다():
+    기록: list = []
+    엔진 = _해외일봉엔진(record=lambda kind, row: 기록.append((kind, dict(row))))
+    엔진.note_open(해외, _ms(16, 7, 0))
+    _틱(엔진, _ms초(16, 23, 59, 59), 100.5)
+    _틱(엔진, _ms초(17, 0, 0, 1), 101.0)
+
+    엔진.close_session(_ms(17, 6, 0))
+
+    assert _닫힌_날(엔진)[-1] == ("16", 101.0), "자정 뒤 체결까지 16일 봉 하나입니다."
+    assert 엔진.book.orders == [] and "entry" in 엔진._deferred, "마감 판정의 주문은 다음 세션에 냅니다."
+    (잔고,) = [row for kind, row in 기록 if kind == engine.DAY_ROW]
+    assert 잔고["day"] == "2026-09-16"
+
+    엔진.note_open(해외, _ms(17, 7, 0))
+    _틱(엔진, _ms초(17, 7, 0, 1), 101.0)
+
+    assert len(엔진.book.orders) == 1
+    assert 엔진.run.day_key == _자정(17)
+
+
+def test_해외_일봉은_세션_끝_신호가_없어도_다음_세션_첫_체결에서_닫힌다():
+    엔진 = _해외일봉엔진()
+    엔진.note_open(해외, _ms(16, 7, 0))
+    _틱(엔진, _ms초(16, 23, 59, 59), 100.5)
+    _틱(엔진, _ms초(17, 5, 59, 0), 101.0)
+    엔진.note_open(해외, _ms(17, 7, 0))
+
+    _틱(엔진, _ms초(17, 7, 0, 1), 99.5)
+
+    assert _닫힌_날(엔진)[-1] == ("16", 101.0)
+    assert 엔진.bars.open_bar.timestamp == _자정(17)
+    assert 엔진.run.day_key == _자정(17)
+
+
+def test_해외_일봉의_창_밖_체결은_열린_봉의_날을_잇는다():
+    # CME 의 쉬는 시간(06:00~07:00)에 늦게 온 체결.
+    엔진 = _해외일봉엔진()
+    _틱(엔진, _ms(16, 23, 0), 100.0)
+    _틱(엔진, _ms초(17, 6, 30, 0), 100.2)
+
+    assert len(엔진.bars.bars) == 2 and 엔진.bars.open_bar.timestamp == _자정(16)
+
+    # 홍콩의 점심 쉼(13:00~14:00)과 자정을 넘는 익일 구간(18:00~04:00).
+    홍콩 = _해외일봉엔진(_HKEX)
+    for 때 in (_ms(16, 12, 59), _ms(16, 13, 30), _ms(16, 14, 0), _ms(16, 23, 0), _ms(17, 1, 0)):
+        _틱(홍콩, 때)
+
+    assert len(홍콩.bars.bars) == 2 and 홍콩.bars.open_bar.timestamp == _자정(16)
+
+
+def test_국내_일봉은_전과_같이_달력_날짜로_묶는다():
+    엔진 = engine.RunEngine(
+        runs.Run(id="r", version_id="", code="A", session="domestic-night", market="domestic",
+                 state=runs.ARMED, draft={**_설정(), "baseBar": "일봉"}),
+        tick=0.05,
+    )
+    for 때, 창 in ((_ms(16, 23, 0), "domestic-night"), (_ms(17, 1, 0), "domestic-night"), (_ms(17, 10, 0), "domestic-day")):
+        엔진.on_trade({"timestamp": 때, "price": 100.0, "quantity": 1}, 창, at=때)
+
+    assert 엔진.bars.bars == [], "야간과 그 다음 주간이 한 봉(17일)입니다."
+    assert 엔진.bars.open_bar.timestamp == bar_lib.day_slot_of(_ms(16, 23, 0), "domestic-night") == _자정(17)
+
+
+def test_국내_일봉도_앞_날_봉이_닫혀도_거래일을_되돌리지_않는다():
+    """세션 끝 신호를 못 받은 날 — 새 날 첫 체결이 거래일을 넘긴 뒤 앞 날 봉을 닫습니다."""
+    엔진 = engine.RunEngine(
+        runs.Run(id="r", version_id="", code="A", session="domestic-day", market="domestic",
+                 state=runs.ARMED, draft={**_설정(), "baseBar": "일봉"}),
+        tick=0.05,
+    )
+    엔진.note_open("domestic-day", _ms(16, 8, 45))
+    엔진.on_trade({"timestamp": _ms(16, 10, 0), "price": 99.0, "quantity": 1}, "domestic-day", at=_ms(16, 10, 0))
+    엔진.note_open("domestic-day", _ms(17, 8, 45))
+
+    때 = _ms초(17, 8, 45, 1)
+    엔진.on_trade({"timestamp": 때, "price": 99.0, "quantity": 1}, "domestic-day", at=때)
+
+    assert _닫힌_날(엔진) == [("16", 99.0)]
+    assert 엔진.run.day_key == _자정(17)
+
+
+def test_지난_봉_셈의_해외_일봉은_받은_봉을_합치지_않는다():
+    """받은 일봉은 이미 세션 날짜이고 그 날 0시의 점들로 풀어 넣습니다 — 시간표로 다시 읽지 않습니다."""
+    from backend.strategy.indicators import Bar
+
+    봉들 = [Bar(_자정(day), close, close, close, close, 10) for day, close in
+            ((14, 99.0), (15, 101.0), (16, 99.0), (17, 101.0), (18, 99.0))]
+
+    def 셈(trading_day):
+        return backtest.compute(
+            draft={**_설정(), "baseBar": "일봉"}, market="overseas", code="6A", session=해외, bars=봉들,
+            tick=0.01, margin=1_000.0, trading_day=trading_day,
+        )
+
+    시간표 = 셈(_거래일(_CME))
+    assert 시간표 == 셈(None)
+    assert 시간표["signals"] >= 1

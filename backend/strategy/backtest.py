@@ -227,14 +227,17 @@ class BacktestEngine(engine_lib.RunEngine):
         # 지난 봉에는 봉 안의 체결이 없습니다. 「틱」 전략도 봉 마감으로 셉니다
         # (`assumptions.evalBasis`).
         self.eval_tick = False
-        self.trading_day = trading_day
+        # **일봉은 시간표의 거래일을 쓰지 않습니다.** 받은 일봉의 날짜가 이미 세션
+        # 날짜이고, 봉을 그 날 0시의 점들로 풀어 넣습니다(`_walk`). 그 0시를 시간표로
+        # 다시 읽으면 자정을 넘기는 세션에서는 앞 날 세션이 나와 이웃한 봉이 합쳐집니다.
+        self.trading_day = None if self.bars.daily else trading_day
         self._every = every
         self._full = rules.series_of(
             every,
             sessions=[run.session] * len(every),
             session=run.session,
             wanted=self._wanted,
-            day_of=self._day_of if trading_day is not None else None,
+            day_of=self._bar_day_of if self.trading_day is not None else None,
         )
         self._recorded: dict[str, list[float | None]] = {
             name: [] for name in rules.RECORDED_IDS + (rules.BAR_ORDER,)

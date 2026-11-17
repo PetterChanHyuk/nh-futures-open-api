@@ -308,7 +308,9 @@ class RunEngine:
         self.gap_ms = int(gap_seconds * 1000)
         self.aux = run.draft.get("aux") if isinstance(run.draft.get("aux"), dict) else {}
         self.rules = run.draft.get("rules") if isinstance(run.draft.get("rules"), dict) else {}
-        self.bars = bar_lib.BarBuilder(str(run.draft.get("baseBar") or ""))
+        # 일봉 자리는 실행의 거래일로 셉니다 — 해외는 시간표의 거래 창이 시작한 날이라
+        # 자정을 넘기는 세션도 한 봉입니다(`_trade_day_slot`).
+        self.bars = bar_lib.BarBuilder(str(run.draft.get("baseBar") or ""), day_of=self._trade_day_slot)
         #: 주문을 채우는 자리. 종이는 이 앱이 지어내고(`paper.PaperBook`),
         #: 모의는 계좌가 채웁니다(`sim.SimBroker`). **엔진이 보는 얼굴은
         #: 하나**라 여기만 갈아 끼우면 나머지가 그대로 돕니다.
@@ -375,8 +377,9 @@ class RunEngine:
         self._judging = False
         #: 세션 마감에서 봉을 닫는 중인지. 이 동안 걸린 일봉 규칙은 주문을 미룹니다.
         self._closing_session = False
-        #: 봉 시각 → 거래일을 답하는 자리. 해외 실행에만 답니다(`service._stand`) —
-        #: 해외 VWAP 의 세션을 시간표의 거래 창으로 가릅니다. 없으면 `bars.day_slot_of`.
+        #: 시각 → 거래일을 답하는 자리. 해외 실행에만 답니다(`service._stand`) —
+        #: 해외 일봉 자리·거래일 열쇠·VWAP 의 세션을 시간표의 거래 창으로 가릅니다.
+        #: 없으면 `bars.day_slot_of`.
         self.trading_day: Callable[[int], Any] | None = None
         #: 봉 시각마다 받은 거래일. **새 봉에 한 번만** 묻습니다(`_day_of`).
         self._days: dict[int, Any] = {}
@@ -905,7 +908,7 @@ class RunEngine:
         if self._tick_rest_from is not None and self._closed_at(bar) > self._tick_rest_from:
             # 쉬기 시작한 뒤에 끝나는 봉입니다. 다음 봉부터 다시 틱으로 판정합니다.
             self._tick_rest_from = None
-        day = self._trading_slot(bar.timestamp, context)
+        day = self._bar_slot(bar.timestamp, context)
         if not self._day_checked:
             self._day_checked = True
             # 거래일을 시간표로 세기 전에 담긴 해외 실행은 열쇠가 달력 날짜입니다.
@@ -931,9 +934,15 @@ class RunEngine:
         self.run.last_bar_at = bar.timestamp
         # **첫 봉은 경계가 아닙니다.** 그때는 거래일을 처음 적는 것이라, 이것을
         # 바뀜으로 읽으면 실행을 세울 때마다 대사가 한 번 더 붙습니다.
-        if self.run.mode in runs.ACCOUNT_MODES and self.run.day_key and day != self.run.day_key:
-            self.audit_wanted = True
-        self.run.roll_day(day, self.ledger, self.book.last_price)
+        #
+        # **거래일은 앞으로만 넘깁니다.** 일봉 실행은 새 세션의 첫 체결에서 이미 새
+        # 날로 넘겼고(`_roll_daily`), 세션 끝 신호를 못 받은 날에는 그 체결이 앞 날의
+        # 봉을 닫습니다. 그 봉의 날로 되돌리면 새 날의 하루 손실·진입 수가 한 번 더
+        # 풀리고 다음 체결에서 또 풀립니다.
+        if not self.run.day_key or day > self.run.day_key:
+            if self.run.mode in runs.ACCOUNT_MODES and self.run.day_key:
+                self.audit_wanted = True
+            self.run.roll_day(day, self.ledger, self.book.last_price)
         self.curve.append({"time": bar.timestamp, "equity": self.run.cash + self._profit()})
         if len(self.curve) > self._history:
             del self.curve[0 : len(self.curve) - self._history]
@@ -1125,7 +1134,7 @@ class RunEngine:
                 del self._days[key]
         if len(self._opens) > 2 and self.bars.bars:
             alive = {
-                self._day_key(bar.timestamp, context)
+                (self._bar_slot(bar.timestamp, context), context)
                 for bar, context in zip(self.bars.bars, self.bars.sessions)
             }
             newest = max(key[0] for key in alive) if alive else 0
@@ -1166,7 +1175,7 @@ class RunEngine:
             marks=marks,
             session=self.run.session,
             wanted=self._wanted,
-            day_of=self._day_of if self.trading_day is not None else None,
+            day_of=self._bar_day_of if self.trading_day is not None else None,
         )
 
     def _day_of(self, timestamp: int, context: str) -> Any:
@@ -1190,6 +1199,14 @@ class RunEngine:
         if self.trading_day is None:
             return bar_lib.day_slot_of(timestamp, context)
         day = self._day_of(timestamp, context)
+        if day is None and self.bars.daily:
+            # 일봉은 봉 자리가 곧 거래일입니다. 열린 봉이 있으면 그 날, 없으면 마지막 봉의 날.
+            held = self.bars.open_bar
+            if held is not None and held.timestamp <= timestamp:
+                return held.timestamp
+            for bar in reversed(self.bars.bars):
+                if bar.timestamp <= timestamp:
+                    return bar.timestamp
         if day is None:
             for bar in reversed(self.bars.bars):
                 if bar.timestamp < timestamp and self._days.get(bar.timestamp) is not None:
@@ -1197,7 +1214,37 @@ class RunEngine:
                     break
         if day is None:
             return bar_lib.day_slot_of(timestamp, context)
-        return int(datetime(day.year, day.month, day.day, tzinfo=KST).timestamp() * 1000)
+        return _midnight(day)
+
+    def _trade_day_slot(self, timestamp: int, context: str) -> int | None:
+        """체결 하나가 드는 **일봉 자리**(그 거래일의 0시, KST 밀리초). 봉 만들기가 씁니다.
+
+        국내는 `bars.day_slot_of`(야간은 다음 날)입니다. 해외는 시간표의 거래 창이
+        시작한 날이고, 창 밖이면 `None` 입니다 — 봉 만들기가 열린 봉의 날을 잇습니다.
+        **기억하지 않습니다.** 체결 시각은 봉 시각과 달리 끝없이 새로 오므로, 담아 두면
+        실행 내내 쌓입니다.
+        """
+        if self.trading_day is None:
+            return bar_lib.day_slot_of(timestamp, context)
+        day = self.trading_day(timestamp)
+        return None if day is None else _midnight(day)
+
+    def _bar_slot(self, timestamp: int, context: str) -> int:
+        """봉 하나의 거래일 0시. **일봉은 봉 자리가 곧 거래일이라 그대로** 씁니다.
+
+        일봉의 시각(그 거래일 0시)을 다시 거래일로 바꾸면 안 됩니다 — 자정을 넘기는
+        해외 세션에서는 0시가 **앞 날 세션** 안이라 하루 앞 날이 나옵니다. 분봉은 봉
+        시작 시각이 그 세션 안이라 `_trading_slot` 으로 셉니다.
+        """
+        if self.bars.daily:
+            return timestamp
+        return self._trading_slot(timestamp, context)
+
+    def _bar_day_of(self, timestamp: int, context: str) -> Any:
+        """봉 하나의 거래일(날짜). 판정 값 한 벌(`rules.series_of`)이 씁니다 — 까닭은 `_bar_slot`."""
+        if self.bars.daily:
+            return datetime.fromtimestamp(timestamp / 1000, tz=KST).date()
+        return self._day_of(timestamp, context)
 
     def _day_key(self, timestamp: int, context: str) -> tuple[int, str]:
         """`(거래일, 세션)` — 개장 시각과 봉 순서를 묶는 열쇠(`_trading_slot`)."""
@@ -1220,7 +1267,7 @@ class RunEngine:
         made = dict(self._marks.get(bar.timestamp) or {})
         minutes = self.bars.minutes or 0
         step = minutes * 60_000
-        opened = self._opens.get(self._day_key(bar.timestamp, context))
+        opened = self._opens.get((self._bar_slot(bar.timestamp, context), context))
         first = None
         if step and opened is not None:
             first = firsts.get(opened)
@@ -1328,7 +1375,7 @@ class RunEngine:
                     mark=self._mark_row(closed[-1], self.bars.sessions[-1], {}),
                     session=self.run.session,
                     wanted=self._wanted,
-                    day_of=self._day_of if self.trading_day is not None else None,
+                    day_of=self._bar_day_of if self.trading_day is not None else None,
                 )
                 self._tick_closed = (made, times)
                 return made
@@ -1358,7 +1405,7 @@ class RunEngine:
             mark=mark,
             session=self.run.session,
             wanted=self._wanted,
-            day_of=self._day_of if self.trading_day is not None else None,
+            day_of=self._bar_day_of if self.trading_day is not None else None,
         )
 
     def _tick_stages(self, series: rules.Series) -> dict[str, rules.Stage]:
@@ -3112,6 +3159,11 @@ def _int(value: Any) -> int | None:
         return int(float(str(value).strip()))
     except (TypeError, ValueError):
         return None
+
+
+def _midnight(day: Any) -> int:
+    """그 날의 0시(KST, 밀리초). 거래일 열쇠의 단위입니다(`bars.day_slot_of` 와 같음)."""
+    return int(datetime(day.year, day.month, day.day, tzinfo=KST).timestamp() * 1000)
 
 
 def _float(value: Any) -> float | None:
