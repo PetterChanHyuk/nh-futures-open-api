@@ -376,6 +376,163 @@ def test_해외_취소인데_원주문이_아직_보이면_정하지_않는다(�
     assert 호출부.부른("overseas_order-error") == 2 and 호출부.부른("overseas_order-history") == 2
 
 
+# ── 해외 취소: 주문내역 다음 쪽 ─────────────────────────────
+#
+# 해외 취소는 「원주문이 주문내역에 안 보임」을 접수로 읽습니다. 첫 쪽에 없다는
+# 것만으로는 정할 수 없어, 다음 쪽을 이어 받아 원주문을 찾습니다.
+
+
+class 쪽별호출부(API별호출부):
+    """해외 주문내역을 `nxt_key` 마다 정해 둔 쪽으로 답합니다. 나머지는 `API별호출부` 그대로."""
+
+    def __init__(self, 쪽들: dict, 답들: dict, **더):
+        super().__init__({**답들, "overseas_order-history": {}}, **더)
+        self.쪽들 = 쪽들
+        self.물은키: list[str] = []
+
+    def call(self, api_id, payload, environment=None):
+        if api_id != "overseas_order-history":
+            return super().call(api_id, payload, environment)
+        self.보낸것.append((api_id, dict(payload)))
+        키 = str(payload.get("nxt_key") or "")
+        self.물은키.append(키)
+        답 = self.쪽들[키]
+        if isinstance(답, Exception):
+            raise 답
+        return ApiResult(
+            api_id=api_id, environment="paper", market=self.market, http_status=200, body=답, headers={}
+        )
+
+
+def _해외쪽(*줄들: dict, 다음: str = "") -> dict:
+    return {"Occurs1": list(줄들), "nxt_key": 다음}
+
+
+def _해외줄(번호: str, 상태: str = "3", **더) -> dict:
+    return {"occurs1_ord_no": 번호, "occurs1_sym": "ZNZ26", "occurs1_ord_sts": 상태, **더}
+
+
+def _해외취소(쪽들: dict, side: str = "buy") -> tuple[dict, 쪽별호출부]:
+    """원주문 200 의 취소를 내고 결과를 봅니다. 취소의 접수 번호는 210 입니다."""
+    호출부 = 쪽별호출부(
+        쪽들,
+        {"overseas_order": _해외접수("0000000210"), "overseas_order-error": _해외오류()},
+        market="overseas",
+    )
+    물음 = _해외주문물음(sym="ZNZ26", side=side, qt_div_cd="3", glb_ord_tp_cd="2", ord_pric="20.5", org_ord_no="200")
+    return _부른다("/api/overseas/order", 물음, 호출부, overseas_client), 호출부
+
+
+@pytest.mark.parametrize("side", ["buy", "sell"])
+def test_해외_취소는_원주문이_다음_쪽에_남아_있으면_정하지_않는다(확인을_켠다, side):
+    몸, 호출부 = _해외취소(
+        {"": _해외쪽(_해외줄("0000000199"), 다음="PAGE_2"), "PAGE_2": _해외쪽(_해외줄("0000000200"))},
+        side,
+    )
+
+    assert 몸["outcome"] == {"state": "unknown"}, "원주문이 둘째 쪽에 잔량을 들고 남아 있습니다."
+    assert 호출부.물은키 == ["", "PAGE_2", "", "PAGE_2"], "확인마다 다음 쪽까지 봅니다."
+
+
+@pytest.mark.parametrize("side", ["buy", "sell"])
+def test_해외_취소는_끝_쪽까지_보고도_원주문이_없으면_accepted_다(확인을_켠다, side):
+    몸, 호출부 = _해외취소(
+        {"": _해외쪽(_해외줄("0000000199"), 다음="PAGE_2"), "PAGE_2": _해외쪽(_해외줄("0000000198"))},
+        side,
+    )
+
+    assert 몸["outcome"] == {"state": "accepted", "source": "order-history"}
+    assert 호출부.물은키 == ["", "PAGE_2"]
+
+
+def test_해외_취소는_원주문이_첫_쪽에_있으면_다음_쪽을_부르지_않는다(확인을_켠다):
+    몸, 호출부 = _해외취소({"": _해외쪽(_해외줄("0000000200"), 다음="PAGE_2")})
+
+    assert 몸["outcome"] == {"state": "unknown"}
+    assert 호출부.물은키 == ["", ""]
+
+
+def test_해외_취소는_상한까지_받고도_쪽이_남으면_정하지_않는다(확인을_켠다):
+    쪽수 = order_outcome.MORE_PAGES
+    쪽들 = {"": _해외쪽(_해외줄("0000000100"), 다음="P1")}
+    for 차례 in range(1, 쪽수 + 1):
+        쪽들[f"P{차례}"] = _해외쪽(_해외줄(f"00000001{차례:02d}"), 다음=f"P{차례 + 1}")
+
+    몸, 호출부 = _해외취소(쪽들)
+
+    assert 몸["outcome"] == {"state": "unknown"}, "다 못 봤으면 원주문이 없다고 말할 수 없습니다."
+    assert 호출부.물은키 == (["", *[f"P{차례}" for 차례 in range(1, 쪽수 + 1)]]) * 2
+
+
+def test_해외_취소에서_다음_쪽_조회가_실패하면_정하지_않는다(확인을_켠다):
+    몸, 호출부 = _해외취소(
+        {
+            "": _해외쪽(_해외줄("0000000199"), 다음="PAGE_2"),
+            "PAGE_2": BusinessError("overseas_order-history", "E9", "조회 불가", {}),
+        }
+    )
+
+    assert 몸["outcome"] == {"state": "unknown"}
+    assert 몸["accepted"] is True, "확인을 못 한 것이지 취소가 실패한 것이 아닙니다."
+    assert 호출부.물은키 == ["", "PAGE_2", "", "PAGE_2"]
+
+
+def test_해외_취소에서_같은_키가_다시_오면_끝_쪽으로_본다(확인을_켠다):
+    몸, 호출부 = _해외취소(
+        {
+            "": _해외쪽(_해외줄("0000000199"), 다음="PAGE_2"),
+            "PAGE_2": _해외쪽(_해외줄("0000000198"), 다음="PAGE_2"),
+        }
+    )
+
+    assert 몸["outcome"] == {"state": "accepted", "source": "order-history"}
+    assert 호출부.물은키 == ["", "PAGE_2"], "같은 키로 되묻지 않습니다."
+
+
+def test_해외_취소에서_새_줄이_없는_쪽이_오면_끝_쪽으로_본다(확인을_켠다):
+    """끝에서 첫 쪽을 다시 주는 조회가 있습니다 — 이미 본 줄뿐이면 더 없는 것입니다."""
+    몸, 호출부 = _해외취소(
+        {
+            "": _해외쪽(_해외줄("0000000199"), 다음="PAGE_2"),
+            "PAGE_2": _해외쪽(_해외줄("199"), 다음="PAGE_3"),
+        }
+    )
+
+    assert 몸["outcome"] == {"state": "accepted", "source": "order-history"}
+    assert 호출부.물은키 == ["", "PAGE_2"]
+
+
+def test_해외_취소의_거부_줄이_다음_쪽에_있으면_rejected_다(확인을_켠다):
+    몸, 호출부 = _해외취소(
+        {
+            "": _해외쪽(_해외줄("0000000199"), 다음="PAGE_2"),
+            "PAGE_2": _해외쪽(
+                _해외줄("0000000210", "9", occurs1_err_cd="7037", occurs1_rejt_rsn="이미 처리완료된 [주문] 건 입니다"),
+            ),
+        }
+    )
+
+    assert 몸["outcome"] == {
+        "state": "rejected",
+        "source": "order-history",
+        "code": "7037",
+        "message": "이미 처리완료된 [주문] 건 입니다",
+    }
+    assert 호출부.물은키 == ["", "PAGE_2"]
+
+
+def test_해외_판정은_다음_쪽이_남은_내역으로는_취소를_정하지_않는다():
+    """`look` 을 거치지 않고 판정만 불러도 같습니다."""
+    내역 = {"orders": [{"id": "199"}], "nextKey": "PAGE_2"}
+
+    assert order_outcome.judge_overseas(내역, {"errors": []}, "210", cancelling=True, original_no="200") is None
+    끝 = {"orders": [{"id": "199"}], "nextKey": ""}
+    assert order_outcome.judge_overseas(끝, {"errors": []}, "210", cancelling=True, original_no="200") == {
+        "state": "accepted",
+        "source": "order-history",
+    }
+
+
 def test_해외_신규는_내역에_없다고_접수로_보지_않는다(확인을_켠다):
     """취소만 「없음」을 접수로 봅니다. 신규가 안 보이면 아직 모르는 것입니다."""
     호출부 = API별호출부(

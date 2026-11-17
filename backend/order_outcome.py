@@ -24,14 +24,18 @@ NH선물은 주문·정정·취소에 동기 응답으로 「접수」(주문번
 
 **기다리는 시간과 호출 수.** 첫 조회는 접수 뒤 `WAITS[0]` 초, 거기서 못 찾으면
 `WAITS[1]` 초 뒤에 한 번 더 봅니다. 한 번에 국내는 조회 하나(주문내역), 해외는
-둘(주문오류내역·주문내역)이라 주문 하나에 많아야 넷입니다. 계좌 조회는 호출
+둘(주문오류내역·주문내역)이라 주문 하나에 많아야 넷입니다. 해외 취소는 주문내역을
+다음 쪽까지 볼 수 있어 한 번에 `MORE_PAGES` 쪽이 더 붙습니다. 계좌 조회는 호출
 제한을 지나므로(`backend.nh_api.rate_limit`) 넘치지 않고 차례를 기다립니다.
 
 **거부가 기다리는 시간보다 늦게 기록될 수 있습니다.** 그때는 `unknown` 이 되고,
 주문내역이 뒤에 그 결과를 보입니다.
 
-**첫 쪽만 봅니다.** 주문내역을 이어 받지 않으므로, 그날 주문이 많아 그 주문이
-첫 쪽에 없으면 `unknown` 입니다.
+**주문내역은 첫 쪽만 봅니다 — 해외 취소만 다음 쪽까지 봅니다.** 그날 주문이 많아
+그 주문이 첫 쪽에 없으면 `unknown` 입니다. 해외 취소는 「원주문이 안 보임」을
+접수로 읽으므로(`judge_overseas`), 첫 쪽에 없다는 것만으로는 정할 수 없습니다.
+그래서 다음 쪽을 이어 받아 원주문을 찾고(`_read_on`), **끝 쪽까지 봤을 때만**
+접수로 봅니다. 상한까지 받고도 쪽이 남았거나 이어 받다 실패하면 `unknown` 입니다.
 """
 from __future__ import annotations
 
@@ -63,6 +67,9 @@ WAITS: tuple[float, ...] = (0.7, 2.0)
 #: 주문내역의 「거부」 상태코드. 국내·해외 모두 같은 값입니다.
 REJECTED_STATUS_CODE = "9"
 
+#: 해외 취소를 판정할 때 첫 쪽 뒤로 더 받아 보는 주문내역 쪽 수의 상한.
+MORE_PAGES = 4
+
 #: 바꿔 낄 수 있게 둔 기다리기. 시험이 실제로 기다리지 않고 지나갑니다.
 sleep: Callable[[float], None] = time.sleep
 
@@ -90,11 +97,15 @@ def settle(look: Callable[[], dict[str, Any] | None]) -> dict[str, Any]:
     return unknown()
 
 
+def _number(value: Any) -> str:
+    """주문번호를 견줄 모양으로. 앞자리 0 채움의 차이를 지웁니다."""
+    return str(value or "").strip().lstrip("0")
+
+
 def _same_no(left: Any, right: Any) -> bool:
     """주문번호가 같은지. 앞자리 0 채움의 차이는 같은 번호로 봅니다."""
-    one = str(left or "").strip().lstrip("0")
-    two = str(right or "").strip().lstrip("0")
-    return bool(one) and one == two
+    one = _number(left)
+    return bool(one) and one == _number(right)
 
 
 def _rejected(code: Any, message: Any, source: str) -> dict[str, Any]:
@@ -147,7 +158,8 @@ def judge_overseas(
     **해외 취소는 줄이 남지 않을 수 있습니다** — 취소가 받아들여지면 원주문 줄이
     주문내역에서 빠집니다. 그래서 취소는 「오류내역에 없고, 주문내역에 취소
     번호도 원주문 번호도 없음」을 접수로 봅니다. 원주문이 아직 보이면 정하지
-    않습니다.
+    않습니다. **주문내역에 다음 쪽이 남아 있으면(`nextKey`) 정하지 않습니다** —
+    원주문이 안 본 쪽에 있을 수 있습니다.
     """
     for row in errors.get("errors") or []:
         if _same_no(row.get("orderNo"), order_no):
@@ -156,9 +168,55 @@ def judge_overseas(
     for row in rows:
         if _same_no(row.get("id"), order_no):
             return _from_row(row, "errorCode")
-    if cancelling and original_no and not any(_same_no(row.get("id"), original_no) for row in rows):
+    seen_all = not str(history.get("nextKey") or "").strip()
+    if cancelling and original_no and seen_all and not _holds(rows, original_no):
         return {"state": ACCEPTED, "source": FROM_HISTORY}
     return None
+
+
+def _holds(rows: list[dict[str, Any]], *numbers: str) -> bool:
+    """줄들 가운데 이 번호들 중 하나의 주문이 있는지."""
+    return any(_same_no(row.get("id"), one) for row in rows for one in numbers if one)
+
+
+def _read_on(
+    first: dict[str, Any], fetch: Callable[[str], dict[str, Any]], *numbers: str
+) -> dict[str, Any]:
+    """주문내역(화면 모양) 첫 쪽 뒤로 다음 쪽을 이어 받아 줄을 합칩니다.
+
+    찾는 번호(`numbers`)가 보이면 거기서 멈춥니다. **`nextKey` 가 비어 있으면 끝
+    쪽까지 본 것입니다** — 상한(`MORE_PAGES`)까지 받고도 쪽이 남았으면 남은 키를
+    그대로 둬서 `judge_overseas` 가 정하지 않게 합니다.
+
+    서버가 마지막 쪽을 어떻게 알리는지는 실물로 확인하지 못했습니다. 그래서 키가
+    비는 것 말고도 **같은 키가 다시 오거나, 받은 쪽에 새 줄이 하나도 없으면** 끝으로
+    봅니다 — 끝에서 같은 키를 주거나 첫 쪽을 다시 주는 조회가 있습니다.
+    이어 받다 실패하면 예외가 그대로 올라가 그 회차는 「못 찾음」입니다(`settle`).
+    """
+    rows = list(first.get("orders") or [])
+    key = str(first.get("nextKey") or "").strip()
+    asked: set[str] = set()
+    seen = {_number(row.get("id")) for row in rows}
+    for _ in range(MORE_PAGES):
+        if not key or _holds(rows, *numbers):
+            break
+        if key in asked:
+            key = ""
+            break
+        asked.add(key)
+        page = fetch(key)
+        fresh = []
+        for row in page.get("orders") or []:
+            number = _number(row.get("id"))
+            if not number or number not in seen:
+                fresh.append(row)
+        if not fresh:
+            key = ""
+            break
+        rows.extend(fresh)
+        seen.update(_number(row.get("id")) for row in fresh)
+        key = str(page.get("nextKey") or "").strip()
+    return {**first, "orders": rows, "nextKey": key}
 
 
 def look(
@@ -180,6 +238,14 @@ def look(
 
         errors = overseas_account.order_errors(api.order_error(now_kst().strftime("%Y%m%d"), **call))
         history = overseas_account.order_history(api.order_history(**call))
+        if cancelling and original_no:
+            # 원주문이 첫 쪽에 없다고 취소로 정하면 안 됩니다 — 다음 쪽을 봅니다.
+            history = _read_on(
+                history,
+                lambda key: overseas_account.order_history(api.order_history(next_key=key, **call)),
+                order_no,
+                original_no,
+            )
         return judge_overseas(
             history, errors, order_no, cancelling=cancelling, original_no=original_no
         )
