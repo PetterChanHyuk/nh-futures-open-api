@@ -714,12 +714,7 @@ export async function loadList(
       return
     }
     if (!response.ok) {
-      announceList(key, {
-        ...held,
-        status: hadRows ? 'ready' : 'failed',
-        failure: response.status === 502 ? 'rejected' : 'retry',
-        refreshing: false,
-      })
+      announceList(key, failedList(key, held, response.status === 502 ? 'rejected' : 'retry'))
       return
     }
     const body = (await response.json()) as Record<string, unknown>
@@ -755,7 +750,7 @@ export async function loadList(
     if (next !== null) void fillList(key, { market, kind, scope, period, conversion }, next)
   } catch {
     if (since !== generation()) return
-    announceList(key, { ...held, status: hadRows ? 'ready' : 'failed', failure: 'retry', refreshing: false })
+    announceList(key, failedList(key, held, 'retry'))
   } finally {
     if (flyingLists.get(key) === since) {
       flyingLists.delete(key)
@@ -763,6 +758,15 @@ export async function loadList(
       if (reask.delete(key)) void loadList(market, kind, scope, period, conversion)
     }
   }
+}
+
+/** 목록을 못 받았을 때의 자리. **물을 때 잡아 둔 목록이 아니라 지금 목록에** 상태만
+ *  얹습니다 — 물어보는 동안 실시간 알림이 줄을 갈아 끼웠을 수 있고
+ *  (`applyOrderEvents`), 물을 때의 목록으로 되돌리면 이미 받은 체결이 지워져 끝난
+ *  주문이 미체결로 다시 섭니다. 받아 둔 줄이 없으면 「못 받음」입니다. */
+function failedList(key: string, held: ListEntry<unknown>, failure: DepositFailure): ListEntry<unknown> {
+  const now = lists.get(key) ?? held
+  return { ...now, status: now.rows != null ? 'ready' : 'failed', failure, refreshing: false }
 }
 
 /* ── 주문오류 기간: 못 받은 날 다시 받기 ─────────────────────
