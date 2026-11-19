@@ -146,6 +146,61 @@ def test_관통은_지난_체결_수량만큼만_채운다(장부):
     assert 주문.remaining == 9 and 주문.status == paper.PARTIAL
 
 
+def _같은_쪽_지정가_둘(장부, 쪽: str, 가격들: tuple[float, float], 앞순위: int = 1):
+    """같은 쪽 지정가 A·B 를 1계약씩 차례로 세웁니다. 가격마다 앞 순위가 `앞순위` 만큼 서 있습니다."""
+    주문들 = [
+        장부.place(name, side=쪽, quantity=1, order_type="지정가", price=값, at=기준 + 순번)
+        for 순번, (name, 값) in enumerate(zip(("A", "B"), 가격들))
+    ]
+    서있는것 = [(값, 앞순위) for 값 in sorted(set(가격들))]
+    if 쪽 == paper.BUY:
+        장부.on_book(_호가([(110.0, 5)], sorted(서있는것, reverse=True)), at=기준 + 지연 + 5)
+    else:
+        장부.on_book(_호가(서있는것, [(90.0, 5)]), at=기준 + 지연 + 5)
+    return 주문들
+
+
+@pytest.mark.parametrize("쪽", [paper.BUY, paper.SELL])
+def test_같은_가격_지정가_둘은_체결_한_건을_나눠_갖는다(장부, 쪽):
+    """**체결 수량은 한 번만 씁니다**(가정 7). 앞 순위 1계약이 빠진 뒤 체결 1계약은
+    먼저 선 A 몫이고, B 는 다음 체결을 기다립니다 — 둘 다 1계약씩 채우면 체결이
+    걸린 주문 수만큼 불어납니다."""
+    A, B = _같은_쪽_지정가_둘(장부, 쪽, (100.0, 100.0))
+
+    assert 장부.on_trade(_체결(100.0, 1), at=기준 + 지연 + 10) == [], "앞 순위 1계약이 먼저입니다."
+    채운것 = 장부.on_trade(_체결(100.0, 1), at=기준 + 지연 + 20)
+
+    assert [(one["orderId"], one["quantity"]) for one in 채운것] == [("A", 1)]
+    assert (A.filled, B.filled) == (1, 0)
+
+    채운것 = 장부.on_trade(_체결(100.0, 1), at=기준 + 지연 + 30)
+
+    assert [(one["orderId"], one["quantity"]) for one in 채운것] == [("B", 1)], "다음 체결은 B 몫입니다."
+
+
+@pytest.mark.parametrize("쪽", [paper.BUY, paper.SELL])
+def test_체결이_둘에_다_들어갈_만큼이면_둘_다_채운다(장부, 쪽):
+    """나눠 갖는다는 것이 한 주문만 채운다는 뜻은 아닙니다 — 앞 순위 뒤 2계약이면 A·B 가 1계약씩."""
+    A, B = _같은_쪽_지정가_둘(장부, 쪽, (100.0, 100.0))
+
+    채운것 = 장부.on_trade(_체결(100.0, 3), at=기준 + 지연 + 10)
+
+    assert [(one["orderId"], one["quantity"]) for one in 채운것] == [("A", 1), ("B", 1)]
+
+
+@pytest.mark.parametrize("쪽", [paper.BUY, paper.SELL])
+def test_가격이_다른_지정가_둘이_같은_체결에_닿으면_유리한_가격부터(장부, 쪽):
+    """매수 101·100(매도 99·100)에 100 체결 1계약이 오면 둘 다 닿지만, 1계약은 유리한
+    가격의 B 한 번만입니다. 먼저 낸 A 라도 가격이 불리하면 뒤입니다."""
+    가격들 = (100.0, 101.0) if 쪽 == paper.BUY else (100.0, 99.0)
+    A, B = _같은_쪽_지정가_둘(장부, 쪽, 가격들, 앞순위=0)
+
+    채운것 = 장부.on_trade(_체결(100.0, 1), at=기준 + 지연 + 10)
+
+    assert [(one["orderId"], one["quantity"]) for one in 채운것] == [("B", 1)]
+    assert (A.filled, B.filled) == (0, 1)
+
+
 def test_매도_지정가는_반대_방향으로_본다(장부):
     주문 = 장부.place("o1", side=paper.SELL, quantity=2, order_type="지정가", price=100.0, at=기준)
     장부.on_book(_호가([(100.0, 3), (101.0, 5)], [(99.0, 5)]), at=기준 + 지연)

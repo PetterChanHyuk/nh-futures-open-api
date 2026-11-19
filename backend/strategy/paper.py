@@ -28,7 +28,10 @@
    양을 먼저 세어 보고 전량이 될 때만 먹습니다.
 7. **관통해도 지난 체결 수량만큼만** — 이 주문의 가격을 지난 체결이 와도 그 체결의
    수량에서 앞 순위(`Q`)를 먼저 깎고 남는 만큼만 채웁니다. 「가격이 넘었으니
-   전부」는 얇은 장에서 실제보다 많이 채웁니다.
+   전부」는 얇은 장에서 실제보다 많이 채웁니다. **체결 한 건의 수량은 한 번만
+   씁니다** — 같은 쪽 지정가가 여럿 그 체결에 닿으면 가격이 유리한 주문부터, 같은
+   가격이면 먼저 선 주문부터 남은 수량을 나눠 갖습니다. 주문마다 그 수량을 통째로
+   주면 체결 1계약이 걸린 주문 수만큼 불어납니다.
 8. **단일가 창과 가격제한에서는 채우지 않고 미룹니다** — 국내 동시호가(장 시작·
    종가 단일가) 구간은 세션 판정의 시간표가 알려 주고(실행 목록이 구간을 넣습니다),
    **체결·호가의 시각이** 그 구간 안이면 채우지 않습니다. 단일가로 한 값에 맞춰
@@ -270,7 +273,7 @@ class PaperBook:
         if self.gap or self._in_auction(at):
             return []
 
-        made: list[dict[str, Any]] = []
+        queued: list[PaperOrder] = []
         for order in self.open_orders:
             if not self._ripe(order, at):
                 continue
@@ -278,7 +281,17 @@ class PaperBook:
                 self._arm(order, price)
                 continue
             if order.order_type in (LIMIT_ORDER, STOP_LIMIT) and order.arrived:
-                made += self._queued(order, price, quantity, at)
+                queued.append(order)
+
+        # **체결 수량은 쪽마다 한 번만 씁니다**(가정 7). 줄 선 차례대로 앞 주문이
+        # 채운 만큼을 덜고 남은 수량만 뒤 주문에 넘깁니다 — 체결 1계약이 같은 쪽
+        # 지정가 둘에 1계약씩 들어가면 없던 체결이 생깁니다.
+        made: list[dict[str, Any]] = []
+        left = {BUY: quantity, SELL: quantity}
+        for order in sorted(queued, key=_queue_turn):
+            fills = self._queued(order, price, left[order.side], at)
+            left[order.side] -= sum(int(one["quantity"]) for one in fills)
+            made += fills
         return made
 
     def fill_now(self, order: PaperOrder, price: float, *, at: int) -> list[dict[str, Any]]:
@@ -490,6 +503,16 @@ def fill_no(order_id: str, index: int) -> str:
     `{실행 id}-{차례}` 로 매기는 것과 같은 결이라, 눈으로도 어디 것인지 읽힙니다.
     """
     return f"{order_id}#{int(index)}"
+
+
+def _queue_turn(order: PaperOrder) -> tuple[float, int]:
+    """체결을 나눠 받는 차례. 가격이 유리한 주문이 먼저이고, 같은 가격이면 먼저 낸 주문입니다.
+
+    매수는 높은 지정가, 매도는 낮은 지정가가 유리합니다 — 거래소도 그 주문을 먼저
+    채웁니다. 같은 가격·같은 시각이면 장부에 들어온 차례(정렬이 순서를 지킴)입니다.
+    """
+    limit = order.price if order.price is not None else 0.0
+    return (-limit if order.side == BUY else limit, order.created)
 
 
 def _levels(raw: Any, *, nearest_last: bool) -> list[tuple[float, int]]:
