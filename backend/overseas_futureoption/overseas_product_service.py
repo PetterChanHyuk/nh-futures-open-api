@@ -91,6 +91,11 @@ class ProductService:
         """받아 둔 표. 날짜와 상관없이 있으면 그것입니다. 없으면 `None`."""
         return self._made
 
+    def fresh(self, now: datetime | None = None) -> bool:
+        """오늘 받아 둔 표가 있는지. 통신하지 않습니다."""
+        now = now or now_kst()
+        return self._kept(now.astimezone(KST).strftime("%Y-%m-%d")) is not None
+
     def reset(self) -> None:
         """받아 둔 것을 버립니다. 테스트가 씁니다."""
         with self._lock:

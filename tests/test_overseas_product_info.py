@@ -38,6 +38,7 @@ def _표(**덮어쓰기):
                 "contractUnit": 5.0,
                 "tickSize": 0.25,
                 "tickValue": 1.25,
+                "contractInitialMargin": 2885.0,
                 "delivery": "현금결제",
                 "appliedDate": "2026-09-01",
             }
@@ -94,6 +95,16 @@ def test_그_종목의_품목_값을_낸다(손님):
     assert 답["appliedDate"] == "2026-09-01"
     assert 답["source"] == "cache"
     assert 답["why"] == ""
+    assert 답["contractInitialMargin"] == 2885.0
+
+
+@pytest.mark.parametrize("종류", ["option", "spread"])
+def test_선물_종목이_아니면_증거금을_내지_않는다(손님, 종류):
+    """마스터가 선물 품목 줄로 잇더라도 스프레드·옵션에는 그 값을 세우지 않습니다."""
+    답 = 손님(product={"product_code": "MES", "kind": 종류}).post(주소, json={"sym": 종목}).json()
+
+    assert 답["contractUnit"] == 5.0
+    assert 답["contractInitialMargin"] is None
 
 
 def test_틱은_안_낸다(손님):

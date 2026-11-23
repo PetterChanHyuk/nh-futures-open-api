@@ -12,7 +12,7 @@ import type { ExpectedOrder, VerifyRun } from '../../data/strategyRuns'
  */
 
 /** 계약당 증거금을 거래소만 셈할 수 있는 근거. 이 근거면 기다려도 값이 오지 않습니다. */
-const EXCHANGE_BASES = ['no-margin-field', 'sell-unknown', 'mixed']
+const EXCHANGE_BASES = ['sell-unknown', 'mixed']
 
 const NOT_COUNTED = '셈하지 못함'
 
@@ -101,9 +101,11 @@ export function RunStatusCard({
   const left = run.marginLeft ?? null
   const basis = run.perContractBasis
   const unknownWhy =
-    basis !== null && EXCHANGE_BASES.includes(basis)
-      ? '계약당 증거금은 거래소가 셈합니다'
-      : '계약당 증거금을 아직 모릅니다'
+    basis === 'no-margin-field'
+      ? '계약당 증거금을 알 수 없습니다'
+      : basis !== null && EXCHANGE_BASES.includes(basis)
+        ? '계약당 증거금은 거래소가 셈합니다'
+        : '계약당 증거금을 아직 모릅니다'
   /* 묶인 돈은 셈했는데 남은 돈이 없으면 예산을 정하지 않은 실행입니다. */
   const leftWhy = used !== null && left === null ? '증거금 예산을 정하지 않았습니다' : unknownWhy
 

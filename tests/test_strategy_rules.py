@@ -437,6 +437,74 @@ def test_실행_전_봉의_빈_값에서_넘어오는_것은_전이가_아니다
     assert _두_경로가_같다(_보유규칙("gt", "0"), series) == [3]
 
 
+def _직전_모름(rule: dict, series: rules.Series, index: int) -> bool:
+    """조건표가 그 봉의 1단계를 「직전 모름」으로 내는지."""
+    stage, fired = rules.stage_at(rule, series, index)
+    return rules.condition_table(rule, series, index, stage, fired)["stepsDetail"][0]["beforeUnknown"]
+
+
+def test_모두_단계는_아는_조건이_직전에_거짓이면_빈_값이_있어도_전이다():
+    """직전 종가가 기준 아래면 호가가 무엇이었든 「모두」는 직전 봉에 거짓입니다."""
+    rule = _rule(_cond("close", "gt", "100"), _cond("bid1Qty", "gte", "1"))
+    series = rules.series_of(
+        _bars([99, 101, 102, 103]), marks=_적은값({"bid1Qty": [None, 1.0, 1.0, 1.0]})
+    )
+
+    assert _두_경로가_같다(rule, series) == [1], "참이 된 봉에서 한 번만 걸립니다."
+    assert _직전_모름(rule, series, 1) is False
+
+
+def test_모두_단계는_아는_호가가_직전에_거짓이어도_다른_호가의_빈_값을_넘는다():
+    rule = _rule(_cond("bid1Qty", "gte", "5"), _cond("ask1Qty", "gte", "1"))
+    series = rules.series_of(
+        _bars([10, 10]), marks=_적은값({"bid1Qty": [1.0, 5.0], "ask1Qty": [None, 1.0]})
+    )
+
+    assert _두_경로가_같다(rule, series) == [1]
+
+
+def test_모두_단계는_아는_조건이_직전에_참이면_빈_값이_있을_때_전이가_아니다():
+    """빈 값이 참이었으면 단계가 이미 참이었던 것이라 새 전이라고 할 수 없습니다."""
+    rule = _rule(_cond("close", "gt", "100"), _cond("bid1Qty", "gte", "1"))
+    series = rules.series_of(_bars([101, 102]), marks=_적은값({"bid1Qty": [None, 1.0]}))
+
+    assert _두_경로가_같다(rule, series) == []
+    assert _직전_모름(rule, series, 1) is True
+
+
+def test_모두_단계는_조건을_전부_모르면_전이가_아니다():
+    rule = _rule(_cond("bid1Qty", "gte", "1"), _cond("ask1Qty", "gte", "1"))
+    series = rules.series_of(
+        _bars([10, 10]), marks=_적은값({"bid1Qty": [None, 1.0], "ask1Qty": [None, 1.0]})
+    )
+
+    assert _두_경로가_같다(rule, series) == []
+
+
+def test_모두_단계의_준비_전_지표는_아는_거짓이_아니다():
+    """값이 아직 없는 지표는 거짓으로 읽힐 뿐, 직전 봉이 거짓이라는 근거가 되지 않습니다."""
+    rule = _rule(_cond("prevHigh", "gt", "0"), _cond("bid1Qty", "gte", "1"))
+    series = rules.series_of(_bars([10, 11]), marks=_적은값({"bid1Qty": [None, 1.0]}))
+
+    assert series.at("prevHigh", 0) is None
+    assert _두_경로가_같다(rule, series) == []
+
+
+def test_하나라도_단계는_직전_값을_모르면_전이가_아니다():
+    """직전 호가가 기준 이상이었으면 단계가 이미 참이었으므로, 값을 모를 때는 걸지 않습니다."""
+    rule = _rule(_cond("close", "gt", "100"), _cond("bid1Qty", "gte", "10"), join="any")
+
+    def 걸린_봉(before: float | None) -> list[int]:
+        series = rules.series_of(_bars([99, 101]), marks=_적은값({"bid1Qty": [before, 1.0]}))
+        return _두_경로가_같다(rule, series)
+
+    assert 걸린_봉(None) == []
+    assert 걸린_봉(1.0) == [1], "직전이 확실히 거짓이면 전이입니다."
+    assert 걸린_봉(20.0) == [], "직전이 이미 참이면 전이가 아닙니다."
+    series = rules.series_of(_bars([99, 101]), marks=_적은값({"bid1Qty": [None, 1.0]}))
+    assert _직전_모름(rule, series, 1) is True
+
+
 def test_빈_값_규칙은_지표만_쓰는_단계를_건드리지_않는다():
     """지표·가격만 쓰는 1단계는 새 열이 비어 있어도 전과 같이 전이를 봅니다."""
     series = rules.series_of(_bars([10, 11, 12]))

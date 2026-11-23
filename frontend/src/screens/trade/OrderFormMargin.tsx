@@ -1,13 +1,26 @@
 import type { ReactNode } from 'react'
-import { PRODUCT_INFO_FAILED, ceilWon, type ProductInfoEntry } from '../../data/productInfo'
+import { PRODUCT_INFO_FAILED, ceilWon, marginInCurrency } from '../../data/productInfo'
 
 /** 옵션 카드의 증거금 안내. 빈 자리가 높이를 맞추려고 같은 문장을 씁니다. */
 const OPTION_MARGIN_NOTE = '옵션 증거금은 품목정보에 없습니다'
 
-/** 개시증거금 어림 한 줄 —「계약당 X원 · 이 주문 Y원」과 그 셈을 밝히는 한 줄.
+/** 이 줄이 읽는 품목 값. 국내·해외 답이 같은 칸을 씁니다. */
+interface MarginEntry {
+  status: 'idle' | 'loading' | 'ready' | 'failed'
+  row: { contractInitialMargin: number | null; why: string } | null
+}
+
+/** 금액 한 마디. **원은 원 단위 올림**이고, 외화는 받은 값 그대로 품목 통화로 적습니다. */
+function amount(value: number, currency: string): string {
+  return currency === 'KRW'
+    ? `${ceilWon(value).toLocaleString('ko-KR')}원`
+    : marginInCurrency(value, currency)
+}
+
+/** 개시증거금 어림 한 줄 —「계약당 X · 이 주문 Y」와 그 셈을 밝히는 한 줄.
  *
- *  **두 수는 각각 원 단위 올림입니다.** 증거금은 모자라면 안 되는 값이라, 내린 수를
- *  「묶인다」고 적으면 실제보다 적게 말합니다. 곱셈은 **받은 원값**으로 합니다 —
+ *  **원화의 두 수는 각각 원 단위 올림입니다.** 증거금은 모자라면 안 되는 값이라, 내린
+ *  수를 「묶인다」고 적으면 실제보다 적게 말합니다. 곱셈은 **받은 값**으로 합니다 —
  *  계약당을 먼저 올려 곱하면 수량만큼 오차가 불어납니다.
  *
  *  **자리 높이는 늘 같습니다.** 값이 오기 전에도, 수량이 비어 뒷마디와 셈 줄이
@@ -17,12 +30,16 @@ export function MarginLine({
   blank,
   option,
   entry,
+  currency,
   quantity,
 }: {
   /** 신규가 아닌 주문(청산·정정·취소) — 라벨도 값도 없이 자리만 잡습니다. */
   blank: boolean
   option: boolean
-  entry: ProductInfoEntry
+  entry: MarginEntry
+  /** 금액의 통화. 국내는 `KRW`, 해외는 품목 통화입니다. **모르면 값을 적지 않습니다** —
+   *  단위 없는 수는 어느 돈인지 읽히지 않습니다. */
+  currency: string | null
   quantity: number
 }) {
   if (blank) {
@@ -44,7 +61,7 @@ export function MarginLine({
   let title: string | undefined
   let note = ''
   if (option) {
-    /* 옵션은 품목정보에 증거금이 없습니다. 셈할 값이 없다는 사실만 적습니다. */
+    /* 옵션은 쓸 수 있는 증거금 값이 없습니다. 셈할 값이 없다는 사실만 적습니다. */
     value = '계약당 —'
     note = OPTION_MARGIN_NOTE
   } else if (entry.status === 'failed') {
@@ -52,17 +69,16 @@ export function MarginLine({
     title = PRODUCT_INFO_FAILED
   } else if (entry.status === 'ready' && entry.row) {
     const each = entry.row.contractInitialMargin
-    if (each == null) {
+    if (each == null || currency === null) {
       value = '계약당 —'
       title = entry.row.why || undefined
     } else {
-      const per = `계약당 ${ceilWon(each).toLocaleString('ko-KR')}원`
+      const per = `계약당 ${amount(each, currency)}`
       if (Number.isFinite(quantity) && quantity > 0) {
-        const total = ceilWon(each * quantity).toLocaleString('ko-KR')
         value = (
           <>
             <span className="order-margin-part">{per} ·</span>{' '}
-            <span className="order-margin-part">이 주문 {total}원</span>
+            <span className="order-margin-part">이 주문 {amount(each * quantity, currency)}</span>
           </>
         )
         note = '품목 값 × 수량으로 셈했습니다'

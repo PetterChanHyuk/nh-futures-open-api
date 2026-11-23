@@ -299,9 +299,10 @@ WHY_BUDGET_UNCHECKED = "계약당 증거금을 몰라 증거금 예산 검사를
 def budget_unchecked(run: "Run") -> bool:
     """증거금 예산 검사를 **건너뛰는** 실행인지.
 
-    NH선물의 해외 조회에는 계약당 증거금 칸이 없어, 해외 선물·스프레드는 계약당
-    값을 알 길이 없습니다. 모른다고 진입을 막으면 예산을 둔 해외 실행은 한 번도
-    들어가지 못하므로, **예산 검사만 건너뛰고** 나머지 검사는 그대로 합니다.
+    해외 선물은 품목 표의 계약당 개시증거금으로 검사합니다. 그 값이 없을 때(표를 못
+    받았거나 통화가 어긋남)와, 전용 증거금이 없는 스프레드만 여기 듭니다. 모른다고
+    진입을 막으면 그 실행은 한 번도 들어가지 못하므로, **예산 검사만 건너뛰고**
+    나머지 검사는 그대로 합니다.
 
     판정은 그때그때 계약당 값을 보고 합니다 — 값이 생기면 곧바로 검사로
     돌아갑니다. 옵션은 여기 들지 않습니다: 산 옵션은 프리미엄으로 셀 수 있고,
@@ -314,7 +315,7 @@ def budget_unchecked(run: "Run") -> bool:
 def budget_skipped(run: "Run", side: str) -> bool:
     """그 방향의 진입에서 증거금 예산 검사를 건너뛰는지. 실행과 백테스트가 함께 씁니다.
 
-    `budget_unchecked`(해외 선물·스프레드, 계약당 증거금 모름)에 더해 **해외 옵션
+    `budget_unchecked`(계약당 증거금을 모르는 해외 선물·스프레드)에 더해 **해외 옵션
     매도**도 건너뜁니다 — 계약당 증거금을 거래소가 셈해 알 길이 없습니다. 국내 옵션
     매도는 건너뛰지 않고 모르는 채로 막습니다.
     """
@@ -751,7 +752,7 @@ def entry_block(
     if holding.size + open_entry + run.qty > max(max_hold, 0):
         return WHY_MAX_HOLD
 
-    # 해외 선물·스프레드(계약당 증거금 모름)와 해외 옵션 매도는 예산 검사를 건너뜁니다
+    # 계약당 증거금을 모르는 해외 선물·스프레드와 해외 옵션 매도는 예산 검사를 건너뜁니다
     # (`budget_skipped`). 화면이 그 근거(`perContractBasis`)를 보고 안내합니다.
     if run.margin_budget is not None and not budget_skipped(run, side):
         each = per_contract(run, side, signal if signal is not None else last_price)

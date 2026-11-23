@@ -20,14 +20,16 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable, Iterable
 from datetime import date, datetime
 from typing import Any
 
 from backend.master import master_service
-from backend.master.master_index import days_left_of
+from backend.master.master_index import FUTURES, days_left_of
 from backend import market_values, order_outcome, quotes
 from backend.config import ENVIRONMENT_LABELS
+from backend.overseas_futureoption import overseas_product_service
 from backend.sessions import service as session_service
 from backend.sessions.hours import KST, now_kst
 from backend.domestic_futureoption import domestic_hours
@@ -119,9 +121,14 @@ WHY_NO_MARGIN = "계약당 증거금을 받지 못했습니다 —"
 WHY_NO_TABLE = "품목별세부정보를 아직 못 받았습니다"
 WHY_NO_PRODUCT = "그 품목 줄을 품목별세부정보에서 찾지 못했습니다"
 WHY_NO_MARGIN_FIELD = "이 품목에는 계약당 증거금 칸이 없습니다"
-#: 증거금 예산이 있는데 계약당 증거금을 알 길이 없어 그 검사를 건너뛸 때(해외 선물·
-#: 스프레드). 위의 한 번 알림 자리를 이 문장이 대신합니다(`runs.budget_unchecked`).
+#: 해외 종목의 계약당 증거금을 쓸 수 없을 때 — 선물이 아니거나 품목 표에 값이 없습니다.
+WHY_NO_OVERSEAS_MARGIN = "이 품목의 계약당 증거금을 알 수 없습니다"
+#: 증거금 예산이 있는데 계약당 증거금을 모르는 해외 선물·스프레드가 그 검사를 건너뛸
+#: 때. 위의 한 번 알림 자리를 이 문장이 대신합니다(`runs.budget_unchecked`).
 WHY_BUDGET_UNCHECKED = runs.WHY_BUDGET_UNCHECKED
+#: 해외 품목 표를 못 받았을 때 다시 묻기까지의 초. 실행 줄을 낼 때마다 보는 자리라
+#: 간격을 두지 않으면 실패하는 동안 호출 제한을 이 표 하나가 다 씁니다.
+OVERSEAS_TABLE_RETRY_SECONDS = 300.0
 #: 통화를 모르는 해외 실행을 세울 때 한 번 남기는 말과 코드(`reason`).
 WHY_CURRENCY_UNKNOWN_LIMIT = "통화를 몰라 계좌 손실 한도 합계에 넣지 않습니다"
 CURRENCY_UNKNOWN_REASON = "currency-unknown"
@@ -230,8 +237,15 @@ class RunService:
         judged: Any = None,
         markets: Any = None,
         outcome: Any = None,
+        overseas_products: Any = None,
     ) -> None:
         self.store = store if store is not None else runs.store
+        #: 해외 품목 표를 든 자리(`cached`·`fresh`·`products`). 안 주면 표가 없는 것으로
+        #: 돕니다 — 시험이 통신 없이 지나가게 하려는 것이고, 앱은 끝의 `service` 가 줍니다.
+        self._overseas_products = overseas_products
+        self._table_lock = threading.Lock()
+        self._table_asking = False
+        self._table_asked = float("-inf")
         #: 계좌 주문 하나의 접수 뒤 결과를 한 번 조회하는 자리. `(실행, 주문) → 결과`
         #: 입니다(`backend/order_outcome.py`). 바꿔 낄 수 있게 둔 것은, 시험이 계좌에
         #: 닿지 않고 확인을 지나갈 수 있어야 하기 때문입니다.
@@ -439,6 +453,10 @@ class RunService:
         # 없는 값(해외의 체결조건 같은 것)이 실행에 실리지 않습니다. 시장은 요청
         # 시장이고, 아래에서 저장된 버전의 시장과 같은지 봅니다(다르면 세우지 않음).
         draft = validate.normalized({"market": market}, draft) or draft
+        if market == validate.OVERSEAS:
+            # **잠금 밖에서 받습니다**(통신). 첫 진입 전에 계약당 증거금을 알아야
+            # 예산 검사가 첫 주문부터 돕니다.
+            self.load_overseas_products()
         with self._lock:
             # **끝난 실행은 안 셉니다.** 이 한도가 대는 까닭은 실시간 구독
             # 자리이고, 끝난 실행은 시세를 안 받습니다(`watching`). 세면 파일에
@@ -499,7 +517,7 @@ class RunService:
                     if market == validate.OVERSEAS
                     else facts["multiplier"] or 1.0
                 ),
-                margin=facts["margin"],
+                margin=self._margin_in(facts, currency),
                 margin_budget=_number(aux.get("marginBudget")),
                 daily_loss=_number(aux.get("dailyLoss")),
                 # **계좌 갈래는 대사부터입니다** — 계좌에 이 앱이 모르는
@@ -735,13 +753,15 @@ class RunService:
     def instrument(self, market: str, code: str, session: str = "") -> dict[str, Any]:
         """그 종목의 틱·승수·증거금·남은 날. **모르는 것은 `None` 입니다.**
 
-        증거금은 국내 품목별세부정보에만 있습니다(해외는 그 칸이 없습니다).
-        0 으로 답하면 「한 계약도 못 든다」가 되므로 모른다고 답합니다.
+        0 으로 답하면 「증거금 없이 든다」가 되므로 모른다고 답합니다.
 
         증거금은 넷입니다 — 계약당 개시증거금(`margin`)과 두 비율, 그리고
         계약당 유지증거금(`maintenanceMargin`)입니다. **마지막 하나는 응답에
         없어 늘 `None`** 이고 까닭은 `domestic_hours.WHY_NO_MAINTENANCE` 에
         있습니다. 비율로는 볼 수 있습니다.
+
+        **해외는 선물의 계약당 개시증거금만 있고**, 비율은 없습니다. 품목 통화로
+        오므로 그 통화를 `marginCurrency` 에 함께 냅니다(국내는 빈 글자입니다).
 
         `why` 로 **못 채운 까닭**을 함께 냅니다 — 「표를 아직 못 받았다」와
         「그 품목에 그 칸이 없다」는 사용자가 할 일이 다릅니다.
@@ -750,6 +770,7 @@ class RunService:
             "tick": None,
             "multiplier": None,
             "margin": None,
+            "marginCurrency": "",
             "initialMarginRate": None,
             "maintenanceMarginRate": None,
             "maintenanceMargin": None,
@@ -770,7 +791,11 @@ class RunService:
             made["tick"] = _number(row.get("tsiz"))
             made["multiplier"] = overseas_multiplier(row)
             made["exchange"] = str(row.get("ExchName") or "").strip()
-            made["why"] = WHY_NO_MARGIN_FIELD if made["multiplier"] else WHY_NO_MULTIPLIER
+            made["margin"], made["marginCurrency"] = self._overseas_margin(row, made["kind"])
+            if not made["multiplier"]:
+                made["why"] = WHY_NO_MULTIPLIER
+            elif made["margin"] is None:
+                made["why"] = WHY_NO_OVERSEAS_MARGIN
             return made
 
         made["multiplier"] = _number(row.get("ctrt_size"))
@@ -794,6 +819,91 @@ class RunService:
                 runs.WHY_SOLD_OPTION if made["kind"] == runs.OPTION else WHY_NO_MARGIN_FIELD
             )
         return made
+
+    def _overseas_margin(self, row: dict[str, Any], kind: str) -> tuple[float | None, str]:
+        """해외 선물의 `(계약당 개시증거금, 그 통화)`. 모르면 `(None, "")` 입니다.
+
+        **받아 둔 표만 봅니다** — 실행 줄을 낼 때마다 지나는 자리라 통신하지 않습니다.
+        표를 받는 일은 `load_overseas_products`·`_freshen_overseas_table` 이 합니다.
+        통화를 모르는 값은 어느 돈인지 읽을 수 없어 쓰지 않습니다.
+        """
+        if kind != FUTURES or self._overseas_products is None:
+            return None, ""
+        wanted = str(row.get("product_code") or "").strip()
+        held = self._overseas_products.cached() or {}
+        found = next(
+            (
+                one
+                for one in held.get("products") or []
+                if wanted and str(one.get("productCode") or "") == wanted
+            ),
+            None,
+        )
+        if found is None:
+            return None, ""
+        margin = found.get("contractInitialMargin")
+        currency = str(found.get("currency") or "").strip().upper()
+        return (margin, currency) if margin is not None and currency else (None, "")
+
+    @staticmethod
+    def _margin_in(facts: dict[str, Any], currency: str) -> float | None:
+        """실행의 통화로 쓸 수 있는 계약당 증거금. **통화가 다르면 모르는 것입니다.**
+
+        증거금 예산은 실행의 통화이고 해외 증거금은 품목 표의 통화입니다. 두 표의
+        통화가 어긋난 품목을 그대로 견주면 다른 돈끼리 비교하게 됩니다.
+        """
+        unit = str(facts.get("marginCurrency") or "")
+        if unit and unit != str(currency or "").strip().upper():
+            return None
+        return facts.get("margin")
+
+    def known_margin(self, market: str, code: str, facts: dict[str, Any]) -> float | None:
+        """그 종목의 전략 통화로 쓸 수 있는 계약당 증거금. 백테스트가 씁니다."""
+        return self._margin_in(facts, self._currency_of(market, code))
+
+    def load_overseas_products(self) -> None:
+        """해외 품목 표를 오늘 것으로 받아 둡니다. **통신이라 잠금 밖에서 부릅니다.**
+
+        못 받아도 실행과 백테스트를 막지 않습니다 — 그 종목의 증거금을 모르는 채로
+        돌고, 예산 검사를 건너뛴다는 말이 실행에 남습니다(`_keep_margin`).
+        """
+        if self._overseas_products is None:
+            return
+        try:
+            self._overseas_products.products()
+        except Exception as exc:  # noqa: BLE001 — 표가 없다고 실행을 못 세울 것은 아닙니다.
+            logger.warning("해외 품목 표를 받지 못해 계약당 증거금을 모릅니다: %s", exc)
+
+    def _freshen_overseas_table(self, run: Run) -> None:
+        """돌고 있는 해외 선물 실행의 품목 표가 오늘 것이 아니면 뒤에서 받습니다.
+
+        다시 켠 뒤 되살아난 실행과 날을 넘긴 실행은 `add` 를 지나지 않습니다. 줄을
+        내는 자리는 통신하면 안 되므로 스레드 하나로 받고, 실패하면 간격을 둡니다.
+        """
+        if (
+            self._overseas_products is None
+            or run.market != validate.OVERSEAS
+            or run.kind != FUTURES
+            or run.state == runs.ENDED
+            or self._overseas_products.fresh()
+        ):
+            return
+        with self._table_lock:
+            clock = time.monotonic()
+            if self._table_asking or clock - self._table_asked < OVERSEAS_TABLE_RETRY_SECONDS:
+                return
+            self._table_asking = True
+            self._table_asked = clock
+        threading.Thread(
+            target=self._fetch_overseas_table, name="overseas-products", daemon=True
+        ).start()
+
+    def _fetch_overseas_table(self) -> None:
+        try:
+            self.load_overseas_products()
+        finally:
+            with self._table_lock:
+                self._table_asking = False
 
     def _product_row(self, row: dict[str, Any], session: str) -> dict[str, Any] | None:
         """그 종목이 속한 품목 줄. 없으면 `None`.
@@ -1431,6 +1541,7 @@ class RunService:
         facts = self.instrument(made.run.market, made.run.code, made.run.session)
         # 날이 바뀌면 만기까지 남은 날도 바뀝니다. 줄을 낼 때마다 다시 세웁니다.
         made.expiring = _expiring(facts["daysLeft"])
+        self._freshen_overseas_table(made.run)
         self._keep_margin(made, facts)
         each = made.per_contract
         used = runs.margin_used(made.ledger, made.open_entry, each)
@@ -1492,7 +1603,7 @@ class RunService:
         끝내 모르면 **실행마다 한 번** 까닭을 남깁니다 — 「주문을 내지 않았습니다 —
         증거금을 몰라…」만 되풀이되면 왜 모르는지는 알 수가 없습니다.
         """
-        margin = facts.get("margin")
+        margin = self._margin_in(facts, made.run.currency)
         if margin is not None:
             made.run.margin = margin
             return
@@ -1951,4 +2062,8 @@ def _group_from_store(version_id: str) -> str:
 
 
 #: 앱이 쓰는 실행 목록. 테스트는 제 것을 만들어 씁니다.
-service = RunService(groups=_group_from_store, markets=_market_from_store)
+service = RunService(
+    groups=_group_from_store,
+    markets=_market_from_store,
+    overseas_products=overseas_product_service.service,
+)

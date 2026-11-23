@@ -16,7 +16,7 @@ import {
 } from '../../data/strategyList'
 import { sessionKeyOf, sessionLabelOf, sessionLinesFor } from '../../data/strategyRules'
 import { watchLine } from '../../data/ruleSummary'
-import { useProductInfo } from '../../data/productInfo'
+import { overseasMarginIn, useOverseasProductInfo, useProductInfo } from '../../data/productInfo'
 import { addRun, patchVerify, savedOf, type OpenRequest } from '../../data/strategyStore'
 import { currencyCode, moneyDigits, moneyIn, moneyText } from '../../lib/number'
 import { runAddWhy } from '../../data/strategyChecks'
@@ -186,16 +186,22 @@ export function VerifyAddForm({
   const unitTail = unitCode ? `(${unitCode === 'KRW' ? '원' : unitCode})` : ''
 
   /* 자금과 증거금. **계약당 값은 일반주문 폼의 개시증거금과 같은 곳**(품목정보)에서
-     받습니다. 국내 선물만 그 값이 있고, 해외·옵션·스프레드와 품목정보를 아직 못
+     받습니다. 국내·해외 선물만 그 값이 있고, 옵션·스프레드와 품목정보를 아직 못
      받은 때는 「모름」입니다. 칸 값이 틀리면 견주지 않습니다. */
-  const futuresHere = market === 'domestic' && row?.productKind === 'futures'
-  const info = useProductInfo(futuresHere ? code : '')
+  const futures = row?.productKind === 'futures'
+  const info = useProductInfo(futures && market === 'domestic' ? code : '')
+  const overseasInfo = useOverseasProductInfo(futures && market === 'overseas' ? code : '')
+  const each = !futures
+    ? null
+    : market === 'overseas'
+      ? overseasMarginIn(overseasInfo, currency)
+      : info.status === 'ready'
+        ? (info.row?.contractInitialMargin ?? null)
+        : null
   const funds: FundsVerdict | null =
     bad.qty !== null || bad.cash !== null
       ? null
-      : futuresHere && info.status === 'ready' && info.row
-        ? fundsVerdict(info.row.contractInitialMargin, Number(qty), Number(cash), currency)
-        : { kind: 'unknown' }
+      : fundsVerdict(each, Number(qty), Number(cash), currency)
 
   const field = (label: string, node: React.ReactNode, why: string | null = null) => (
     <div key={label}>

@@ -333,7 +333,7 @@ def test_해외_계좌_실행은_예산_검사를_건너뛴다는_표지를_싣�
 
     줄 = _세우기(목록)
 
-    assert 줄["budgetUnchecked"] is True, "해외 선물은 계약당 증거금 칸이 없어 화면이 안내합니다."
+    assert 줄["budgetUnchecked"] is True, "품목 표가 없으면 계약당 증거금을 몰라 화면이 안내합니다."
 
 
 def test_손실_한도는_같은_통화의_실행만_더한다(tmp_path):

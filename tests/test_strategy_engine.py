@@ -1704,7 +1704,7 @@ def test_종이_주문의_미체결_줄에는_주문번호가_없음이다():
     assert "orderNo" in 줄 and 줄["orderNo"] is None
 
 
-def test_해외_선물은_계약당_값을_증거금_칸_없음으로_낸다():
+def test_해외_선물은_증거금을_모르면_근거를_모름으로_낸다():
     해외 = _엔진(market="overseas", session="overseas", code="ESZ26", kind="futures", margin=None)
     assert (해외.per_contract, 해외.per_contract_basis) == (None, engine.BASIS_NO_MARGIN_FIELD)
 

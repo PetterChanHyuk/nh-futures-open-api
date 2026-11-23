@@ -2259,8 +2259,8 @@ def test_실행_줄에_증거금_넷이_실린다(시간표받아둠, 실마스�
     assert 줄["maintenanceMargin"] is None
 
 
-def test_해외는_증거금_칸이_없다(tmp_path):
-    """해외 품목별세부정보에는 그 칸 자체가 없습니다."""
+def test_해외_품목_표가_없으면_증거금을_모른다(tmp_path):
+    """표를 못 받았으면 0 이 아니라 「모름」입니다. 비율은 해외 응답에 없습니다."""
     실행목록 = service_lib.RunService(
         store=runs.RunStore(tmp_path / "runs.json"),
         journal=journal_lib.Journal(tmp_path / "trades.jsonl"),
@@ -2832,7 +2832,7 @@ class _해외선물마스터:
 
 
 def test_해외_선물은_예산_검사를_안_한다고_한_번만_남긴다(tmp_path):
-    """해외 조회에는 계약당 증거금 칸이 없습니다. 알림은 한 줄이고 둘째 줄을 더하지 않습니다."""
+    """품목 표가 없어 계약당 증거금을 모를 때. 알림은 한 줄이고 둘째 줄을 더하지 않습니다."""
     실행목록 = service_lib.RunService(
         store=runs.RunStore(tmp_path / "runs.json"),
         journal=journal_lib.Journal(tmp_path / "trades.jsonl"),

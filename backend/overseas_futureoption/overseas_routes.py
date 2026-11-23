@@ -60,6 +60,7 @@ from backend.nh_api.replay import (
 )
 from backend.nh_api.runtime import client as default_client
 from backend.master import master_service
+from backend.master.master_index import FUTURES
 from backend.sessions import service as session_service
 from backend.sessions.hours import iso, now_kst
 from backend import deposit_history, market_values, orders, quotes
@@ -1012,7 +1013,9 @@ def read_product_info(
     ask: ProductInfoRequest,
     api_client: TradeClient = Depends(get_client),
 ) -> dict[str, Any]:
-    """종목 하나의 품목 값 — 계약단위·통화·인수도구분·적용일자.
+    """종목 하나의 품목 값 — 계약단위·통화·계약당 개시증거금·인수도구분·적용일자.
+
+    **계약당 개시증거금은 선물 종목에만 답합니다**(`overseas_products` 첫머리).
 
     **품목별세부정보는 품목 단위라 종목코드로는 바로 못 찾습니다.** 마스터에서
     그 종목의 품목을 꺼내(`product_of`) 표의 `productCode` 와 잇습니다 — 국내
@@ -1036,6 +1039,7 @@ def read_product_info(
         "productKind": None,
         "contractUnit": None,
         "currency": None,
+        "contractInitialMargin": None,
         "delivery": None,
         "appliedDate": None,
         "source": None,
@@ -1086,6 +1090,9 @@ def read_product_info(
     made["productName"] = found.get("name")
     made["contractUnit"] = found.get("contractUnit")
     made["currency"] = found.get("currency")
+    # 마스터의 종류까지 봅니다 — 스프레드 종목이 선물 품목 줄로 이어져도 값이 서지 않게.
+    if made["productKind"] == FUTURES:
+        made["contractInitialMargin"] = found.get("contractInitialMargin")
     made["delivery"] = found.get("delivery")
     made["appliedDate"] = found.get("appliedDate")
     return _with_why_code(made)

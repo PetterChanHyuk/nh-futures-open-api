@@ -350,6 +350,9 @@ def run_backtest(
     found.extend(qty_problems(qty, aux))
     if ask.feePerContract < 0:
         found.append(_problem("feePerContract", backtest_lib.WHY_FEE))
+    if market == validate.OVERSEAS:
+        # 계약당 증거금이 있어야 예산 검사를 실행과 같은 판정으로 돌립니다.
+        service.load_overseas_products()
     facts = service.instrument(market, ask.code, session)
     if not facts.get("tick"):
         found.append(_problem("code", backtest_lib.WHY_TICK))
@@ -377,7 +380,7 @@ def run_backtest(
             bars=bars,
             tick=float(facts["tick"]),
             multiplier=facts["multiplier"] if market == validate.OVERSEAS else facts.get("multiplier") or 1.0,
-            margin=facts.get("margin"),
+            margin=service.known_margin(market, ask.code, facts),
             kind=str(facts.get("kind") or ""),
             qty=qty,
             fee_per_contract=ask.feePerContract,

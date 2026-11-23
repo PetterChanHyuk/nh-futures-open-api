@@ -24,7 +24,9 @@
 호가·포지션은 실행이 돌면서 적은 값이라, 실행을 세우기 전의 봉(조회로 채운 준비
 봉)에는 없습니다. **없는 값은 거짓**이고, 1단계의 전이도 직전 봉 값이 없으면
 전이로 치지 않습니다 — 그러지 않으면 「보유 수량 0」 같은 상태 조건이 실행을
-세운 첫 봉에서 바로 걸립니다.
+세운 첫 봉에서 바로 걸립니다. 다만 「모두」 단계에서 값을 아는 조건 하나가 직전
+봉에 거짓이었으면, 없는 값이 무엇이든 단계가 거짓이었으므로 전이로 칩니다.
+「하나라도」 단계는 없는 값이 참이었을 수 있어 전이로 치지 않습니다.
 
 ## 규칙은 봉을 하나씩 먹는 상태 기계입니다
 
@@ -709,7 +711,8 @@ def advance(stage: Stage, rule: dict[str, Any], series: Series, index: int) -> t
         filled = filled and not step_at(steps[0], series, index - 1)
         # 호가·포지션처럼 실행이 적는 값은 직전 봉에 **없을** 수 있습니다(실행을
         # 세우기 전의 봉). 없는 것은 거짓으로 읽히므로 그대로 두면 이 봉이
-        # 전이로 보입니다 — 첫 봉과 같은 까닭으로 전이로 치지 않습니다.
+        # 전이로 보입니다 — 직전 봉의 단계 결과가 정해지지 않을 때는 첫 봉과
+        # 같은 까닭으로 전이로 치지 않습니다.
         filled = filled and not _unknown_before(steps[0], series, index - 1)
     else:
         filled = step_at(steps[at], series, index)
@@ -879,20 +882,26 @@ def evaluate(rules: dict[str, Any], series: Series, index: int) -> list[str]:
 
 
 def _unknown_before(step: dict[str, Any], series: Series, index: int) -> bool:
-    """그 단계가 쓰는 호가·시간·포지션 값 가운데 `index` 봉에서 없는 것이 있는지.
+    """그 단계의 `index` 봉 결과가 호가·시간·포지션 값이 없어 정해지지 않는지.
 
-    지표·가격 값은 보지 않습니다 — 그 판정은 전과 같습니다.
+    지표·가격 값이 없는 것은 여기서 보지 않습니다 — 그 판정은 전과 같습니다.
+    「모두」 단계는 값을 아는 조건 하나가 거짓이면 없는 값이 무엇이든 단계가
+    거짓으로 정해집니다. 「하나라도」 단계는 없는 값이 참이었을 수 있습니다.
     """
-    for cond in step.get("conds") or []:
-        if not isinstance(cond, dict):
-            continue
-        names = [str(cond.get("left") or "")]
-        if str(cond.get("rightKind") or "") != "number":
-            names.append(str(cond.get("right") or ""))
-        for name in names:
-            if name in CONTEXT_IDS and series.at(name, index) is None:
-                return True
-    return False
+    conds = [one for one in (step.get("conds") or []) if isinstance(one, dict)]
+    if not any(_context_missing(one, series, index) for one in conds):
+        return False
+    if join_of(step) == JOIN_ALL:
+        return not any(cond_state(one, series, index) is False for one in conds)
+    return True
+
+
+def _context_missing(cond: dict[str, Any], series: Series, index: int) -> bool:
+    """조건이 쓰는 호가·시간·포지션 값 가운데 `index` 봉에서 없는 것이 있는지."""
+    names = [str(cond.get("left") or "")]
+    if str(cond.get("rightKind") or "") != "number":
+        names.append(str(cond.get("right") or ""))
+    return any(name in CONTEXT_IDS and series.at(name, index) is None for name in names)
 
 
 def reset_bars_of(rule: dict[str, Any]) -> int:

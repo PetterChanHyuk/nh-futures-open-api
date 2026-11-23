@@ -362,6 +362,12 @@ class _가짜목록:
     def instrument(self, market, code, session=""):
         return {"tick": 틱, "multiplier": 1.0, "margin": 1_000.0, "exchange": "", "kind": ""}
 
+    def load_overseas_products(self):
+        return None
+
+    def known_margin(self, market, code, facts):
+        return facts["margin"]
+
 
 def _줄(bar: Bar) -> dict:
     return backtest._row_of(bar)

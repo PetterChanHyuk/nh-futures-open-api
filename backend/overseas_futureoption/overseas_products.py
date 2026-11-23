@@ -11,6 +11,10 @@
 **품목별세부정보**(`details`)는 줄 하나가 월물이 아니라 **품목**입니다. 계약단위·
 틱사이즈·틱값이 여기 있고, 그 셋이 있어야 화면이 손익을 셈할 수 있습니다. 숫자는
 자리를 0 으로 채운 문자열로 오므로(`00000000000100000.00000000`) 숫자로 바꿔 냅니다.
+
+**계약당 개시증거금은 선물 줄의 값만 씁니다**(`_contract_margin`). 옵션 줄은 실전에서
+0 이고 모의에서는 같은 품목 선물의 값이 그대로 옵니다. 스프레드 줄도 같은 코드의 선물과
+같은 금액이 와서 스프레드에 걸리는 증거금으로 읽을 수 없습니다.
 """
 from __future__ import annotations
 
@@ -19,7 +23,7 @@ from datetime import date
 from typing import Any
 
 from backend import market_values
-from backend.overseas_futureoption.overseas_hours import kind_of
+from backend.overseas_futureoption.overseas_hours import FUTURES, kind_of
 
 # 이 자리로 오는 것은 전부 해외입니다.
 MARKET = "overseas"
@@ -133,9 +137,21 @@ def _detail(row: dict[str, Any]) -> dict[str, Any]:
         "contractUnit": market_values.number(row.get("occurs1_ctr_unt")),
         "tickSize": market_values.number(row.get("occurs1_tick_unt")),
         "tickValue": market_values.number(row.get("occurs1_tick_val")),
+        "contractInitialMargin": _contract_margin(row),
         "delivery": DELIVERY.get(str(row.get("occurs1_dlv_div") or "").strip()),
         "appliedDate": market_values.date(row.get("occurs1_apl_dt")),
     }
+
+
+def _contract_margin(row: dict[str, Any]) -> float | None:
+    """선물 한 계약의 개시증거금(품목 통화). 선물이 아니거나 0 이하이면 `None` 입니다.
+
+    0 을 값으로 두면 「증거금 없이 들 수 있다」로 읽혀 예산 검사를 그대로 지나갑니다.
+    """
+    if kind_of(row.get("occurs1_fut_opt_div_cd")) != FUTURES:
+        return None
+    value = market_values.number(row.get("occurs1_ctr_mrgn_amt"))
+    return value if value is not None and value > 0 else None
 
 
 def _text(value: Any) -> str | None:

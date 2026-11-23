@@ -377,5 +377,5 @@ def test_증거금을_모르면_계약_수도_모른다():
     """0 으로 답하면 「한 계약도 못 든다」는 뜻이 됩니다."""
     assert paper.max_contracts(10_000_000, 2_500_000) == 4
     assert paper.max_contracts(10_000_000, 4_000_000) == 2, "남는 돈으로 한 계약을 더 들지 않습니다."
-    assert paper.max_contracts(10_000_000, None) is None, "해외는 아직 증거금 칸이 없습니다."
+    assert paper.max_contracts(10_000_000, None) is None, "값이 없는 품목은 모릅니다."
     assert paper.max_contracts(None, 2_500_000) is None

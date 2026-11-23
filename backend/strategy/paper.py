@@ -128,10 +128,9 @@ def fee_of(quantity: int, per_contract: float) -> float:
 def max_contracts(budget: float | None, margin: float | None) -> int | None:
     """증거금 예산으로 들 수 있는 계약 수. **모르면 `None` 입니다.**
 
-    계약당 증거금은 국내 품목별세부정보에서 옵니다. 해외에는 그 칸이 없어
-    아직 모릅니다 — 그때 0 으로 답하면 「한 계약도 못 든다」는 뜻이 되고,
-    큰 수로 답하면 예산이 없는 것과 같아집니다. 모른다고 답하고 부르는 쪽이
-    그대로 알리게 둡니다.
+    계약당 증거금은 품목별세부정보에서 옵니다. 값이 없는 품목을 0 으로 답하면
+    「한 계약도 못 든다」는 뜻이 되고, 큰 수로 답하면 예산이 없는 것과
+    같아집니다. 모른다고 답하고 부르는 쪽이 그대로 알리게 둡니다.
     """
     if budget is None or margin is None or margin <= 0:
         return None

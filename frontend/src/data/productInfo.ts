@@ -23,6 +23,7 @@
  *  `status` 가 그 둘을 가릅니다.
  */
 import { useEffect, useSyncExternalStore } from 'react'
+import { currencyCode } from '../lib/number'
 
 export interface ProductInfo {
   code: string
@@ -152,7 +153,7 @@ export function useProductInfo(code: string): ProductInfoEntry {
 /* ── 해외 ─────────────────────────────────────────────
  *
  * 해외는 **다른 칸**이 없어서 부르는 것이 아니라, 종목 마스터가 안 주는 칸이
- * 있어서 부릅니다 — 계약단위·인수도구분·적용일자입니다. 호가단위와 틱값은
+ * 있어서 부릅니다 — 계약단위·계약당 개시증거금·인수도구분·적용일자입니다. 호가단위와 틱값은
  * 마스터가 주므로 이 라우트가 아예 내지 않습니다(같은 값을 두 곳에서 내면
  * 어긋나는 날 어느 쪽이 맞는지 못 가립니다).
  */
@@ -167,6 +168,9 @@ export interface OverseasProductInfo {
   /** 계약단위 — 한 계약이 몇 단위인가. */
   contractUnit: number | null
   currency: string | null
+  /** 선물 한 계약의 개시증거금(품목 통화). **선물만 값이 있습니다** — 옵션·스프레드는
+   *  늘 `null` 입니다(`overseas_products` 첫머리). */
+  contractInitialMargin: number | null
   /** 인수도구분. **서버가 영어 코드로 줍니다**(`cash`·`physical`). */
   delivery: string | null
   /** 그 품목 값이 적용된 날짜. */
@@ -185,6 +189,23 @@ export interface OverseasProductInfoEntry {
 }
 
 const OVERSEAS_EMPTY: OverseasProductInfoEntry = { status: 'idle', row: null, failure: null }
+
+/** 해외 증거금을 **받은 값 그대로** 품목 통화로 적습니다(「28,857 USD」). 원으로 바꾸지
+ *  않습니다. 곱셈의 부동소수 찌꺼기만 걷어 냅니다(`ceilWon` 과 같은 까닭). */
+export function marginInCurrency(value: number, currency: string): string {
+  const text = Number(value.toFixed(6)).toLocaleString('ko-KR', { maximumFractionDigits: 3 })
+  return `${text} ${currency}`
+}
+
+/** 그 통화로 견줄 수 있는 해외 계약당 증거금. 아직 안 왔거나 **통화가 다르면 `null`**
+ *  입니다 — 전략 자금은 전략의 통화라, 다른 통화의 값과 견주면 다른 돈끼리 비교합니다. */
+export function overseasMarginIn(entry: OverseasProductInfoEntry, currency: string): number | null {
+  const row = entry.status === 'ready' ? entry.row : null
+  if (row?.contractInitialMargin == null) return null
+  return (row.currency ?? '').trim().toUpperCase() === currencyCode(currency)
+    ? row.contractInitialMargin
+    : null
+}
 
 const overseasEntries = new Map<string, OverseasProductInfoEntry>()
 const overseasFlying = new Set<string>()

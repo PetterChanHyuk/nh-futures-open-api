@@ -231,8 +231,9 @@ REASON_LABELS: dict[str, str] = {
 #:     premium-now   프리미엄 × 승수를 **지금 값으로 잰 것**. 틱마다 바뀝니다
 #:     sell-unknown  옵션 매도 — 거래소가 셈하는 값이라 앱이 못 냅니다
 #:     mixed         진입 방향이 갈려 하나로 못 냅니다(옵션 매수·매도가 함께 켜짐)
-#:     no-margin-field  해외 선물·스프레드 — 조회에 계약당 증거금 칸이 없어 못 냅니다.
-#:                   이때 증거금 예산 검사는 하지 않습니다(`runs.budget_unchecked`)
+#:     no-margin-field  해외 스프레드, 또는 품목 표에서 값을 못 받은 해외 선물 — 계약당
+#:                   값을 모릅니다. 이때 증거금 예산 검사는 하지 않습니다
+#:                   (`runs.budget_unchecked`)
 #:
 #: `margin`·`premium-now` 인데 값이 비면 **그 방법으로는 셀 수 있는데 재료가
 #: 없는 것**입니다(표를 아직 못 받았거나, 체결가가 아직 없거나).

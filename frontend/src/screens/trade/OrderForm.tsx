@@ -3,7 +3,7 @@ import type { MarketContext, OpenOrder, Position, ProductKind, Quote } from '../
 import { PENDING_TEXT, needsLeg } from '../../data/instruments'
 import type { OrderableState } from '../../data/orderable'
 import type { OrderResult } from '../../data/orders'
-import { useProductInfo } from '../../data/productInfo'
+import { useOverseasProductInfo, useProductInfo } from '../../data/productInfo'
 import { PriceField } from './OrderFormPriceField'
 import { MarginLine } from './OrderFormMargin'
 import { OrderResultLine } from './OrderFormResult'
@@ -185,6 +185,8 @@ export function OrderForm({
      호가단위를 주는 것을 전제로 선 조건입니다 — 안 주는 품목이 나오면 그
      종목은 눈금 없이 조용히 움직이게 되므로, 그때 이 자리를 고칩니다. */
   const tick = useProductInfo(overseas ? '' : quote.code)
+  /* 해외 선물의 개시증거금은 품목 표에서 옵니다. 옵션·스프레드에는 쓸 값이 없어 안 묻습니다. */
+  const overseasInfo = useOverseasProductInfo(overseas && kind === 'futures' ? quote.code : '')
 
   /* **「아직 안 왔다」에는 아무 말도 안 합니다.** 종목을 고를 때마다 답이 오기
      전 한 박자가 있는데, 그 사이에 「못 받았다」를 세우면 곧 값이 설 자리에서
@@ -506,18 +508,18 @@ export function OrderForm({
           )}
         </div>
 
-        {/* 이 주문이 묶을 개시증거금의 어림. **국내 신규 주문에서만** 값이 섭니다 —
-            해외는 증거금을 주는 표가 없어 셈할 근거가 없고, 청산은 증거금을 푸는
-            쪽이라 「이 주문 Y원」이 거짓이 되며, 정정·취소는 새로 묶는 것이 없습니다.
-            스프레드는 두 다리에 증거금이 어떻게 걸리는지 셈할 근거가 없어 세우지
-            않습니다.
-            국내에서는 신규가 아닐 때도 **같은 높이의 빈 자리**를 둡니다 — 신규와 청산을
+        {/* 이 주문이 묶을 개시증거금의 어림. **신규 주문에서만** 값이 섭니다 — 청산은
+            증거금을 푸는 쪽이라 「이 주문 Y」가 거짓이 되며, 정정·취소는 새로 묶는 것이
+            없습니다. 스프레드는 두 다리에 증거금이 어떻게 걸리는지 셈할 근거가 없어
+            세우지 않습니다. 금액은 그 시장의 통화 그대로입니다(해외는 품목 통화).
+            신규가 아닐 때도 **같은 높이의 빈 자리**를 둡니다 — 신규와 청산을
             오갈 때 아래 「가능수량 조회」 단추가 오르내리지 않게 합니다. */}
-        {!overseas && !spread && (
+        {!spread && (
           <MarginLine
             blank={mode !== 'new'}
             option={kind === 'option'}
-            entry={tick}
+            entry={overseas ? overseasInfo : tick}
+            currency={overseas ? (overseasInfo.row?.currency ?? null) : 'KRW'}
             quantity={quantity}
           />
         )}

@@ -11,18 +11,21 @@ import { watchLine } from '../../data/ruleSummary'
 import { patchVerify, addRun, savedOf, type OpenRequest } from '../../data/strategyStore'
 import {
   FEE_ASSUMED,
-  FUNDS_UNKNOWN,
+  fundsVerdict,
   perOrderNote,
   perOrderOf,
   NO_CASH_DEFAULT,
   cashDefaultOf,
   optionSellWarning,
   type AccountMode,
+  type FundsVerdict,
 } from '../../data/strategyRuns'
+import { overseasMarginIn, useOverseasProductInfo } from '../../data/productInfo'
 import { currencyCode, moneyDigits, moneyIn, moneyText } from '../../lib/number'
 import { runAddWhy } from '../../data/strategyChecks'
 import { RunKindBadge } from './runKind'
 import { ASK_TEXT, type AskFixed, ENV_WAIT } from './strategyRunUtils'
+import { FundsNote } from './strategyVerifyUtils'
 
 /* 거래 추가 — 마지막에 **모의/실전 계좌·실제 계약·수량·청산 감시 방식**을
  * 다시 보여 주고 시작합니다.
@@ -128,9 +131,10 @@ export function RunAddForm({
   const unitCode = currencyCode(currency)
   const noCashDefault = cash === '' && unitCode !== '' && cashDefaultOf(unitCode) === null
   const unitTail = unitCode ? `(${unitCode === 'KRW' ? '원' : unitCode})` : ''
-  /* 해외는 계약당 증거금을 미리 알 수 없어(거래소가 셈함) 자금과 견주지 않습니다 —
-     그 사실을 실행 자금 줄 아래 한 줄로 말합니다. */
-  const marginUnknown = market === 'overseas'
+  /* 해외 선물은 품목 표의 계약당 증거금으로 자금과 견줍니다. 값이 없는 품목(옵션·
+     스프레드)과 아직 못 받은 때는 「모름」을 실행 자금 줄 아래 한 줄로 말합니다. */
+  const overseasFutures = market === 'overseas' && row?.productKind === 'futures'
+  const overseasInfo = useOverseasProductInfo(overseasFutures ? code : '')
   /* 옵션을 **팔고 들어가는** 전략(국내·해외) — 손실이 실행 자금을 넘을 수 있어 승인 문장
      바로 위에 따로 알립니다(막지는 않음).
      판정과 글은 서버 규칙의 거울 하나입니다(`optionSellWarning` — 시장으로 글만 가름). */
@@ -168,6 +172,16 @@ export function RunAddForm({
   /* 세 칸의 판정. 틀린 칸은 붉은 테와 칸 아래 문장이 서고 시작이 막힙니다. */
   const bad = runAddWhy({ qty, cash, fee })
   const inputBad = bad.qty !== null || bad.cash !== null || bad.fee !== null
+  /* 칸 값이 틀리면 견주지 않습니다. 국내는 이 창에서 견주지 않습니다. */
+  const funds: FundsVerdict | null =
+    market !== 'overseas' || bad.qty !== null || bad.cash !== null
+      ? null
+      : fundsVerdict(
+          overseasFutures ? overseasMarginIn(overseasInfo, currency) : null,
+          Number(qty),
+          Number(cash),
+          currency,
+        )
   /* 고른 버전을 저장하는 중인지. 고른 것은 바꾸지 않고 시작만 잠급니다 — 말없이
      다른 버전으로 바꾸면 고른 적 없는 전략이 시작됩니다. */
   const rowSaving = row !== undefined && row.id === savingId
@@ -242,7 +256,7 @@ export function RunAddForm({
             <span>계좌</span>
             <RunKindBadge kind={ask.mode} short />
           </div>
-          {finalRows({ session, instrument, qty, cash, fee, watch, bad, currency, marginUnknown })}
+          {finalRows({ session, instrument, qty, cash, fee, watch, bad, currency, funds })}
         </div>
         {/* 해외 옵션 매도 — 승인 문장 바로 위 한 줄입니다. 막지 않고 알립니다. */}
         {optionSell && (
@@ -398,7 +412,7 @@ export function RunAddForm({
 
       <div className="run-final">
         <p className="run-final-title">시작하면 이렇게 나갑니다</p>
-        {finalRows({ session, instrument, qty, cash, fee, watch, bad, currency, marginUnknown })}
+        {finalRows({ session, instrument, qty, cash, fee, watch, bad, currency, funds })}
       </div>
 
       <div className="run-add-acts">
@@ -435,7 +449,7 @@ function finalRows({
   watch,
   bad,
   currency,
-  marginUnknown,
+  funds,
 }: {
   session: string
   instrument: string
@@ -445,8 +459,8 @@ function finalRows({
   watch: Partial<Aux> | undefined
   /** 금액의 통화. 그 전략 품목의 것입니다. */
   currency: string
-  /** 계약당 증거금을 몰라 자금과 견주지 않는 실행(해외)인지. */
-  marginUnknown: boolean
+  /** 자금과 계약당 증거금을 견준 결과. 견주지 않는 자리는 `null` 입니다. */
+  funds: FundsVerdict | null
   /** 칸 판정(`runAddWhy`). 틀린 칸의 값은 「—」로 섭니다 — 틀린 값을 되묻지 않습니다. */
   bad: ReturnType<typeof runAddWhy>
 }) {
@@ -482,7 +496,7 @@ function finalRows({
         <span>실행 자금</span>
         <b>{bad.cash === null ? moneyIn(Number(cash), currency) : '—'}</b>
       </div>
-      {marginUnknown && <p className="vrf-funds-dim">{FUNDS_UNKNOWN}</p>}
+      {funds && <FundsNote verdict={funds} qty={Number(qty)} currency={currency} />}
       <div className="run-confirm-row">
         <span title={FEE_ASSUMED}>
           수수료<span className="fee-assumed"> (가정)</span>

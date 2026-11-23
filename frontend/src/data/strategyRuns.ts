@@ -349,7 +349,7 @@ const MARGIN_BASIS: Record<string, string> = {
   'premium-now': '지금 값 어림',
   'sell-unknown': '매도는 거래소가 셈',
   mixed: '매수·매도 섞임',
-  'no-margin-field': '이 품목에는 계약당 증거금 칸이 없음',
+  'no-margin-field': '계약당 증거금을 알 수 없음',
 }
 
 export function marginBasisWord(basis: string | null): string {

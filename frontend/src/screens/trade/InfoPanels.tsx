@@ -5,6 +5,7 @@ import { useProductExpiry } from '../../data/productExpiry'
    뜻으로 쓰면 읽는 사람이 어느 쪽인지 되짚어야 합니다. */
 import {
   PRODUCT_INFO_FAILED,
+  marginInCurrency,
   useOverseasProductInfo,
   useProductInfo,
   type OverseasProductInfo as OverseasSpec,
@@ -204,6 +205,14 @@ function OverseasProductInfo({ quote }: { quote: Quote }) {
     displayTick !== null ? displayTick.toLocaleString('ko-KR', { maximumFractionDigits: 10 }) : null
   /* 틱값은 마스터가 곱해 둔 값(`tval`)입니다. 돈 표기는 앱 공통으로 **값 뒤에
      통화 코드**(「1.25 USD」)이고, 통화를 모르면 수만 적습니다. */
+  /* 계약당 개시증거금은 **같은 품목 줄의 통화**로 적습니다. 선물이 아니면 값이 없어
+     「—」이고, 아직 안 왔으면 빈 자리입니다. */
+  const contractMargin =
+    spec.row?.contractInitialMargin != null && spec.row.currency
+      ? marginInCurrency(spec.row.contractInitialMargin, spec.row.currency)
+      : spec.row
+        ? <span className="dead">—</span>
+        : null
   const tickValue =
     contract?.tickValue != null
       ? `${contract.tickValue.toLocaleString('ko-KR', {
@@ -237,6 +246,7 @@ function OverseasProductInfo({ quote }: { quote: Quote }) {
        호가단위로 셈할 수도 있지만 표에 직접 있는 값을 씁니다. 셈해서 내면 그
        나눗셈이 맞는지 늘 함께 믿어야 합니다. */
     ['거래승수', multiplier],
+    ['계약당 증거금', contractMargin],
     ['거래시간', trading.length > 0 ? <Lines items={trading} /> : null],
     ['정산가 산정 시각', spanText(hours?.settlementWindow ?? null) || null],
     ['만기 월물', contract?.label ?? null],
@@ -258,7 +268,13 @@ function OverseasProductInfo({ quote }: { quote: Quote }) {
       {/* **적용일자는 줄이 아니라 시트의 꼬리입니다.** 값 하나하나에 붙는 것이
           아니라 이 표의 품목 값이 언제 것인지를 말하는 한 마디라, 줄로 세우면
           다른 줄들과 같은 무게가 됩니다. */}
-      {spec.row?.appliedDate && <p className="spec-note">{spec.row.appliedDate} 기준</p>}
+      {spec.row?.appliedDate && (
+        <p className="spec-note">
+          {spec.row.contractInitialMargin != null
+            ? `증거금 적용일 ${spec.row.appliedDate} · 품목 단위 값`
+            : `${spec.row.appliedDate} 기준`}
+        </p>
+      )}
     </div>
   )
 }

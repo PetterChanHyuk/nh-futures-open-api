@@ -45,6 +45,7 @@ def _줄(code: str, **덮어쓰기: Any) -> dict[str, Any]:
         "occurs1_ctr_unt": "00000000000100000.00000000",
         "occurs1_tick_unt": "00000000000000000000.000050000",
         "occurs1_tick_val": "00000000000000005.00000000",
+        "occurs1_ctr_mrgn_amt": "0000000000000000002090.000",
         "occurs1_dlv_div": "2",
         "occurs1_apl_dt": "20260713",
     }
@@ -75,9 +76,44 @@ def test_품목_한_줄이_화면_모양으로_바뀐다():
         "contractUnit": 100000.0,
         "tickSize": 0.00005,
         "tickValue": 5.0,
+        "contractInitialMargin": 2090.0,
         "delivery": "physical",
         "appliedDate": "2026-07-13",
     }
+
+
+@pytest.mark.parametrize(
+    "구분, 값",
+    [
+        ("O", "0000000000000000000000.000"),  # 실전의 옵션 줄
+        ("O", "0000000000000000028857.000"),  # 모의의 옵션 줄 — 선물 값이 그대로 옵니다
+        ("S", "0000000000000000028857.000"),  # 스프레드 줄 — 선물과 같은 금액입니다
+        ("Z", "0000000000000000028857.000"),
+    ],
+)
+def test_선물이_아닌_줄의_증거금은_쓰지_않는다(구분, 값):
+    (품목,) = overseas_products.details(
+        [_쪽(_줄("X", occurs1_fut_opt_div_cd=구분, occurs1_ctr_mrgn_amt=값))]
+    )["products"]
+
+    assert 품목["contractInitialMargin"] is None
+
+
+@pytest.mark.parametrize("값", ["", "   ", "아무거나", "0000000000000000000000.000", "-1"])
+def test_선물_증거금이_0_이하거나_읽히지_않으면_모르는_값이다(값):
+    (품목,) = overseas_products.details([_쪽(_줄("ES", occurs1_ctr_mrgn_amt=값))])["products"]
+
+    assert 품목["contractInitialMargin"] is None
+
+
+def test_오늘_받은_표만_새것이다():
+    표 = ProductService()
+    assert 표.fresh(_at(2026, 11, 24)) is False
+
+    표._made, 표._day = {"products": []}, "2026-11-24"
+
+    assert 표.fresh(_at(2026, 11, 24)) is True
+    assert 표.fresh(_at(2026, 11, 25)) is False
 
 
 def test_상품구분과_인수도구분이_낱말로_온다():
