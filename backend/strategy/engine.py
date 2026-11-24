@@ -561,7 +561,7 @@ class RunEngine:
         **표지는 그 칸 밖의 체결이 오면 거둡니다** — 다른 거래일·다른 창의 체결,
         또는 마감한 시각 뒤에 체결된 것입니다. 다음 세션의 장 시작 단일가 체결은
         다른 칸이라 새 봉을 열고, 시간표가 틀려 장중에 세션을 닫은 날에도 그 뒤의
-        체결은 평소대로 받습니다(그날의 봉은 지금처럼 다시 섭니다).
+        체결은 평소대로 받습니다(같은 칸이면 그 봉에 합쳐집니다).
         """
         late = self._late
         if late is None:
@@ -1273,7 +1273,7 @@ class RunEngine:
         if step and opened is not None:
             first = firsts.get(opened)
             if first is None:
-                first = firsts[opened] = bar_lib.slot_of(opened, minutes)
+                first = firsts[opened] = self.bars.minute_slot(opened, context)
         made[rules.BAR_ORDER] = (
             float((bar.timestamp - first) // step + 1)
             if first is not None and bar.timestamp >= first

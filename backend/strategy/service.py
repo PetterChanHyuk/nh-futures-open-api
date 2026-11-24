@@ -1689,7 +1689,67 @@ def _fetch_bars(run: Run, minutes: int | None, count: int) -> list[dict[str, Any
             minutes=str(minutes),
             night=run.session == bar_lib.NIGHT_CONTEXT,
         )
+        return _whole_forming_bar(_rows(raw, run, minute=True), run, minutes, start, end)
     return _rows(raw, run, minute=True)
+
+
+def _whole_forming_bar(
+    rows: list[dict[str, Any]], run: Run, minutes: int, start: str, end: str
+) -> list[dict[str, Any]]:
+    """국내 N분봉의 **아직 안 끝난 봉을 1분봉으로 다시 셉니다.**
+
+    국내 N분봉 조회는 안 끝난 칸에 그 칸 전체가 아니라 **마지막 1분의 값**을 담아
+    줍니다(해외는 칸 전체입니다). 그대로 이어 가면 그 봉의 시가·고가·저가·거래량이
+    칸의 앞부분을 빠뜨립니다. 끝난 칸은 칸 전체가 오므로 건드리지 않습니다.
+
+    1분봉을 못 받으면 조회 값을 그대로 둡니다. 종가는 맞고, 이어지는 체결이 고가와
+    저가를 넓힙니다.
+    """
+    if minutes <= 1 or not rows:
+        return rows
+    # 칸 기준은 품목마다 달라(`bars.grid_of`) 시계로 찾지 않고 마지막 봉으로 봅니다.
+    at = max(range(len(rows)), key=lambda index: int(rows[index].get("timestamp") or 0))
+    slot = int(rows[at].get("timestamp") or 0)
+    now = int(now_kst().timestamp() * 1000)
+    if not slot <= now < slot + minutes * 60_000:
+        return rows
+
+    from backend.domestic_futureoption import domestic_futureoption_functions as api
+
+    try:
+        raw = api.chart_minute(
+            run.code,
+            start_date=start,
+            end_date=end,
+            minutes="1",
+            night=run.session == bar_lib.NIGHT_CONTEXT,
+        )
+        pieces = _rows(raw, run, minute=True)
+    except Exception as exc:  # noqa: BLE001 — 못 받아도 준비 봉은 그대로 씁니다.
+        logger.warning("실행 %s 의 진행 중인 봉을 1분봉으로 세지 못했습니다: %s", run.id, exc)
+        return rows
+    inside = sorted(
+        (
+            one
+            for one in pieces
+            if isinstance(one.get("timestamp"), int)
+            and slot <= one["timestamp"] < slot + minutes * 60_000
+            and one.get("close") is not None
+        ),
+        key=lambda one: one["timestamp"],
+    )
+    if not inside:
+        return rows
+    made = list(rows)
+    made[at] = {
+        **rows[at],
+        "open": inside[0]["open"] if inside[0].get("open") is not None else inside[0]["close"],
+        "high": max(one["close"] if one.get("high") is None else one["high"] for one in inside),
+        "low": min(one["close"] if one.get("low") is None else one["low"] for one in inside),
+        "close": inside[-1]["close"],
+        "volume": sum(int(one.get("volume") or 0) for one in inside),
+    }
+    return made
 
 
 def _fetch_daily(run: Run, count: int) -> list[dict[str, Any]]:
@@ -1718,7 +1778,11 @@ def _rows(raw: dict[str, Any], run: Run, *, minute: bool) -> list[dict[str, Any]
 
     **`minute` 을 맞춰 주어야 합니다.** 분봉 줄은 시각 칸을 함께 읽고 일봉
     줄에는 그 칸이 없어, 일봉을 분봉으로 읽으면 **모든 줄이 버려집니다.**
+
+    분봉은 한 칸에 한 줄로 정리해 받습니다(`quotes.slot_bars`).
     """
+    if minute:
+        return quotes.slot_bars(raw, now=int(now_kst().timestamp() * 1000))
     made = quotes.bars(raw, minute=minute, asked=run.code)
     rows = made.get("bars")
     return [one for one in rows if isinstance(one, dict)] if isinstance(rows, list) else []

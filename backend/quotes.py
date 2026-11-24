@@ -86,6 +86,22 @@ def bars(raw: dict[str, Any], *, minute: bool, asked: str = "") -> dict[str, Any
     rows = raw.get("Occurs1")
     rows = rows if isinstance(rows, list) else []
 
+    made, skipped = _chart_rows(rows, minute=minute)
+    made.sort(key=lambda bar: bar["timestamp"])
+    if skipped:
+        logger.warning("차트에서 시각을 읽지 못한 줄 %d 개를 뺐습니다.", skipped)
+
+    return {
+        "code": code_of(raw, "sym", asked),
+        "bars": made,
+        "skipped": skipped,
+        # 이어 받을 때 쓰는 값입니다. 지금 화면은 연속조회를 하지 않습니다.
+        "nextKey": str(raw.get("nxt_key") or "").strip(),
+    }
+
+
+def _chart_rows(rows: list[Any], *, minute: bool) -> tuple[list[dict[str, Any]], int]:
+    """차트 응답의 줄들을 **받은 차례 그대로** 봉 모양으로. 못 읽은 줄 수를 함께 냅니다."""
     made: list[dict[str, Any]] = []
     skipped = 0
     for row in rows:
@@ -109,17 +125,62 @@ def bars(raw: dict[str, Any], *, minute: bool, asked: str = "") -> dict[str, Any
                 "volume": market_values.count(row.get("occurs1_cum_trd_qty")) or 0,
             }
         )
+    return made, skipped
 
-    made.sort(key=lambda bar: bar["timestamp"])
+
+#: 맨 새 줄의 날짜가 밀렸는지 볼 때 지금 시각에 더 주는 여유(밀리초). 이 앱의 시계가
+#: 서버보다 조금 늦어도 방금 열린 칸을 하루 앞으로 옮기지 않게 합니다.
+_CLOCK_MARGIN_MS = 3_600_000
+_DAY_MS = 86_400_000
+
+
+def slot_bars(raw: dict[str, Any], *, now: int) -> list[dict[str, Any]]:
+    """분봉 응답을 **한 칸에 한 줄**로, 오래된 것부터. 전략이 씁니다.
+
+    NH 분봉은 새 줄부터 오고, 두 경우에 칸 하나가 그대로 오지 않습니다.
+
+    - **칸 안에서 해외영업일이 바뀌면 같은 날짜·시각의 줄이 둘**입니다(영업일이 앞선
+      줄이 칸의 앞부분). 시가는 앞 줄, 종가는 뒤 줄이고 거래량은 더합니다.
+    - **자정을 넘는 칸의 첫 체결이 자정 뒤면 날짜가 하루 뒤로** 적힙니다(23:50 칸이
+      다음 날 23:50 으로). 응답의 차례가 실제 차례이므로, 다음 줄보다 늦은 시각이면
+      하루 당깁니다.
+    """
+    rows = raw.get("Occurs1")
+    made, skipped = _chart_rows(rows if isinstance(rows, list) else [], minute=True)
     if skipped:
         logger.warning("차트에서 시각을 읽지 못한 줄 %d 개를 뺐습니다.", skipped)
+    pairs = list(zip(made, made[1:]))
+    if sum(a["timestamp"] > b["timestamp"] for a, b in pairs) >= sum(
+        a["timestamp"] < b["timestamp"] for a, b in pairs
+    ):
+        made.reverse()
 
+    limit = now + _CLOCK_MARGIN_MS
+    for row in reversed(made):
+        if row["timestamp"] > limit:
+            row["timestamp"] -= _DAY_MS
+        limit = row["timestamp"]
+
+    joined: list[dict[str, Any]] = []
+    for row in made:
+        if joined and joined[-1]["timestamp"] == row["timestamp"]:
+            joined[-1] = _joined_bar(joined[-1], row)
+        else:
+            joined.append(row)
+    return joined
+
+
+def _joined_bar(front: dict[str, Any], back: dict[str, Any]) -> dict[str, Any]:
+    """한 칸의 앞부분과 뒷부분을 한 봉으로."""
+    highs = [one for one in (front["high"], back["high"]) if one is not None]
+    lows = [one for one in (front["low"], back["low"]) if one is not None]
     return {
-        "code": code_of(raw, "sym", asked),
-        "bars": made,
-        "skipped": skipped,
-        # 이어 받을 때 쓰는 값입니다. 지금 화면은 연속조회를 하지 않습니다.
-        "nextKey": str(raw.get("nxt_key") or "").strip(),
+        "timestamp": front["timestamp"],
+        "open": front["open"] if front["open"] is not None else back["open"],
+        "high": max(highs) if highs else None,
+        "low": min(lows) if lows else None,
+        "close": back["close"] if back["close"] is not None else front["close"],
+        "volume": front["volume"] + back["volume"],
     }
 
 

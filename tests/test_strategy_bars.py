@@ -151,15 +151,232 @@ def test_가운데_끊긴_구간도_채운다():
     assert len(만드는것.sessions) == 5
 
 
-def test_안_닫힌_봉은_조회_봉이_못_건드린다():
-    """아직 자라는 중인 봉입니다 — 조회 봉에는 그 자리가 없거나 반쪽입니다."""
+def test_열린_봉과_같은_칸의_조회_봉은_열린_봉에_합친다():
+    """아직 자라는 봉입니다. 목록에 따로 두면 닫힐 때 같은 시각의 봉이 둘이 됩니다."""
     만드는것 = bars.BarBuilder("5분봉")
+    만드는것.add(_체결(10, 1, 100.0, quantity=2), 주간)
+
+    만드는것.seed(
+        [{"timestamp": _때(10, 0), "open": 98, "high": 103, "low": 97, "close": 99, "volume": 5}],
+        주간,
+    )
+
+    assert 만드는것.bars == []
+    열린것 = 만드는것.open_bar
+    assert (열린것.open, 열린것.high, 열린것.low) == (98.0, 103.0, 97.0)
+    assert 열린것.close == 100.0, "종가는 실시간으로 받은 마지막 체결가입니다."
+    assert 열린것.volume == 5.0, "같은 구간을 두 쪽에서 센 값이라 더하지 않습니다."
+
+    닫힌것 = 만드는것.add(_체결(10, 5, 101.0), 주간)
+
+    assert [one.timestamp for one in 닫힌것] == [_때(10, 0)]
+    assert [one.timestamp for one in 만드는것.bars] == [_때(10, 0)]
+
+
+def test_조회의_진행_중인_봉은_첫_체결이_이어받는다():
+    """장중에 시작한 실행입니다. 조회가 준 10:00 봉에 10:02 체결이 이어져 한 봉입니다."""
+    만드는것 = bars.BarBuilder("5분봉")
+    만드는것.seed(
+        [
+            _조회봉(9, 55, 98),
+            {"timestamp": _때(10, 0), "open": 99, "high": 99.5, "low": 98.5, "close": 99, "volume": 7},
+        ],
+        주간,
+    )
+
+    assert 만드는것.add(_체결(10, 2, 100.0, quantity=3), 주간) == []
+
+    assert [one.timestamp for one in 만드는것.bars] == [_때(9, 55)]
+    열린것 = 만드는것.open_bar
+    assert (열린것.timestamp, 열린것.open, 열린것.high, 열린것.low, 열린것.close) == (
+        _때(10, 0), 99.0, 100.0, 98.5, 100.0,
+    )
+    assert 열린것.volume == 10.0
+
+    (닫힌것,) = 만드는것.add(_체결(10, 5, 101.0), 주간)
+
+    assert 닫힌것.close == 100.0
+    assert [one.timestamp for one in 만드는것.bars] == [_때(9, 55), _때(10, 0)]
+    assert 만드는것.sessions == [주간, 주간]
+
+
+def test_조회_뒤_다음_칸의_체결이면_조회_봉은_닫힌_채로_둔다():
+    """그 칸에는 체결이 더 없었습니다. 조회 값이 그 봉의 값이고 다시 판정하지 않습니다."""
+    만드는것 = bars.BarBuilder("5분봉")
+    만드는것.seed([_조회봉(10, 0, 99)], 주간)
+
+    assert 만드는것.add(_체결(10, 5, 101.0), 주간) == []
+
+    assert [one.close for one in 만드는것.bars] == [99.0]
+    assert 만드는것.open_bar.timestamp == _때(10, 5)
+
+
+def test_다른_창의_같은_시각_조회_봉은_잇지_않는다():
+    만드는것 = bars.BarBuilder("5분봉")
+    만드는것.seed([_조회봉(10, 0, 99)], 야간)
+
+    만드는것.add(_체결(10, 2, 100.0), 주간)
+
+    assert [one.close for one in 만드는것.bars] == [99.0]
+    assert 만드는것.open_bar.close == 100.0 and 만드는것.open_session == 주간
+
+
+def test_끊긴_동안_칸이_넘어갔으면_열린_봉은_조회_봉으로_끝낸다():
+    """다음 체결로 닫으면 10:00 봉이 10:10 뒤에 붙어 시각 순서가 깨집니다."""
+    만드는것 = bars.BarBuilder("5분봉")
+    만드는것.add(_체결(10, 1, 100.0), 주간)
+
+    만드는것.seed([_조회봉(10, 0, 99), _조회봉(10, 5, 102), _조회봉(10, 10, 103)], 주간)
+
+    assert 만드는것.open_bar is None
+    assert 만드는것.add(_체결(10, 12, 104.0), 주간) == [], "끝난 봉을 다시 판정하지 않습니다."
+    assert [one.timestamp for one in 만드는것.bars] == [_때(10, 0), _때(10, 5)]
+    assert 만드는것.bars[0].close == 99.0
+    assert 만드는것.open_bar.timestamp == _때(10, 10)
+
+    만드는것.add(_체결(10, 15, 105.0), 주간)
+
+    assert [one.timestamp for one in 만드는것.bars] == [_때(10, 0), _때(10, 5), _때(10, 10)]
+
+
+def test_끊긴_동안_칸이_넘어갔는데_그_칸의_조회_봉이_없으면_열린_봉을_남긴다():
+    만드는것 = bars.BarBuilder("5분봉")
+    만드는것.add(_체결(10, 1, 100.0), 주간)
+
+    만드는것.seed([_조회봉(10, 5, 102)], 주간)
+
+    assert 만드는것.open_bar is None
+    assert [(one.timestamp, one.close) for one in 만드는것.bars] == [
+        (_때(10, 0), 100.0),
+        (_때(10, 5), 102.0),
+    ]
+
+
+def test_칸_기준을_밀어_끊는다():
+    assert bars.slot_of(_때(9, 50), 30, 15) == _때(9, 45)
+    assert bars.slot_of(_때(9, 44, 59), 30, 15) == _때(9, 15)
+    assert bars.slot_of(_때(9, 50), 60, 45) == _때(9, 45)
+    assert bars.slot_of(_때(10, 44), 60, 45) == _때(9, 45)
+    assert bars.slot_of(_때(10, 21), 15, 5) == _때(10, 20)
+    # 자정을 넘겨 이어지는 세션의 칸입니다(홍콩 30분봉의 23:45).
+    assert bars.slot_of(_때(0, 10, day=18), 30, 15) == _때(23, 45)
+
+
+def test_조회_봉에서_칸_기준을_읽는다():
+    assert bars.grid_of([_때(8, 45), _때(9, 15), _때(9, 45)], 30) == 15
+    assert bars.grid_of([_때(8, 45), _때(9, 45)], 60) == 45
+    assert bars.grid_of([_때(10, 0), _때(11, 0)], 60) == 0
+    assert bars.grid_of([_때(10, 5), _때(10, 20), _때(10, 35)], 15) == 5
+    assert bars.grid_of([_때(8, 45), _때(9, 15), _때(9, 20)], 30) == 15, "많은 쪽입니다."
+    assert bars.grid_of([], 30) is None
+
+
+def test_국내_주간_30분봉은_조회_봉의_칸으로_이어진다():
+    """조회는 08:45·09:15·09:45 입니다. 09:52 체결은 09:30 이 아니라 09:45 칸입니다."""
+    만드는것 = bars.BarBuilder("30분봉")
+    만드는것.seed([_조회봉(8, 45, 97), _조회봉(9, 15, 98), _조회봉(9, 45, 99)], 주간)
+
+    assert 만드는것.add(_체결(9, 52, 100.0), 주간) == []
+    assert 만드는것.open_bar.timestamp == _때(9, 45)
+    assert 만드는것.add(_체결(10, 14, 101.0), 주간) == [], "10:15 전까지 같은 칸입니다."
+
+    (닫힌것,) = 만드는것.add(_체결(10, 15, 102.0), 주간)
+
+    assert (닫힌것.timestamp, 닫힌것.close) == (_때(9, 45), 101.0)
+    assert [one.timestamp for one in 만드는것.bars] == [_때(8, 45), _때(9, 15), _때(9, 45)]
+    assert 만드는것.open_bar.timestamp == _때(10, 15)
+
+
+def test_해외_15분봉도_품목의_칸_기준을_따른다():
+    만드는것 = bars.BarBuilder("15분봉")
+    만드는것.seed([_조회봉(10, 5, 98), _조회봉(10, 20, 99)], "overseas")
+
+    만드는것.add(_체결(10, 21, 100.0), "overseas")
+
+    assert 만드는것.open_bar.timestamp == _때(10, 20)
+    assert [one.timestamp for one in 만드는것.bars] == [_때(10, 5)]
+
+
+def test_칸_기준은_창마다_따로다():
+    """국내 주간 30분봉은 :15·:45, 야간은 정각입니다."""
+    만드는것 = bars.BarBuilder("30분봉")
+    만드는것.seed([_조회봉(9, 15, 98)], 주간)
+    만드는것.seed([_조회봉(19, 0, 99)], 야간)
+
+    assert 만드는것.minute_slot(_때(9, 50), 주간) == _때(9, 45)
+    assert 만드는것.minute_slot(_때(19, 50), 야간) == _때(19, 30)
+
+
+def test_기준을_늦게_알면_열린_봉을_새_칸으로_옮겨_합친다():
+    """첫 조회를 못 받아 정각 칸(09:30)으로 연 봉입니다. 09:50 체결은 09:45 칸입니다."""
+    만드는것 = bars.BarBuilder("30분봉")
+    만드는것.add(_체결(9, 50, 100.0), 주간)
+    assert 만드는것.open_bar.timestamp == _때(9, 30)
+
+    만드는것.seed([_조회봉(9, 15, 98), _조회봉(9, 45, 99)], 주간)
+
+    assert 만드는것.open_bar.timestamp == _때(9, 45)
+    assert 만드는것.open_bar.close == 100.0
+    assert [one.timestamp for one in 만드는것.bars] == [_때(9, 15)]
+
+    (닫힌것,) = 만드는것.add(_체결(10, 15, 101.0), 주간)
+
+    assert 닫힌것.timestamp == _때(9, 45)
+    assert [one.timestamp for one in 만드는것.bars] == [_때(9, 15), _때(9, 45)]
+
+
+def test_기준을_늦게_알면_조회가_덮는_어긋난_봉은_뺀다():
+    만드는것 = bars.BarBuilder("30분봉")
+    만드는것.add(_체결(8, 10, 90.0), 주간)  # 조회보다 앞이라 대신할 값이 없습니다.
+    만드는것.add(_체결(9, 0, 100.0), 주간)
+    만드는것.add(_체결(9, 30, 101.0), 주간)
+    만드는것.close()
+    assert [one.timestamp for one in 만드는것.bars] == [_때(8, 0), _때(9, 0), _때(9, 30)]
+
+    만드는것.seed([_조회봉(8, 45, 97), _조회봉(9, 15, 98), _조회봉(9, 45, 99)], 주간)
+
+    assert [one.timestamp for one in 만드는것.bars] == [
+        _때(8, 0), _때(8, 45), _때(9, 15), _때(9, 45),
+    ]
+
+
+def test_지난_칸만_조회하면_열린_봉은_그대로다():
+    만드는것 = bars.BarBuilder("5분봉")
+    만드는것.add(_체결(10, 1, 100.0), 주간)
+
+    만드는것.seed([_조회봉(9, 55, 98)], 주간)
+
+    assert [one.timestamp for one in 만드는것.bars] == [_때(9, 55)]
+    assert 만드는것.open_bar.close == 100.0
+
+
+def test_닫은_칸에_체결이_더_오면_같은_봉에_합친다():
+    만드는것 = bars.BarBuilder("5분봉")
+    만드는것.add(_체결(10, 1, 100.0, quantity=2), 주간)
+    만드는것.close()
+
+    만드는것.add(_체결(10, 2, 103.0, quantity=3), 주간)
+    (닫힌것,) = 만드는것.close()
+
+    (봉,) = 만드는것.bars
+    assert 봉 == 닫힌것
+    assert (봉.open, 봉.high, 봉.close, 봉.volume) == (100.0, 103.0, 103.0, 5.0)
+    assert 만드는것.sessions == [주간]
+
+
+def test_일봉도_조회의_오늘_봉을_이어받는다():
+    """해외 일봉 조회는 오늘 봉까지 줍니다."""
+    만드는것 = bars.BarBuilder(bars.DAILY_BAR)
+    오늘 = bars.day_slot_of(_때(10, 0), 주간)
+    만드는것.seed(
+        [{"timestamp": 오늘, "open": 99, "high": 99, "low": 99, "close": 99, "volume": 7}], 주간
+    )
+
     만드는것.add(_체결(10, 0, 100.0), 주간)
+    만드는것.close()
 
-    만드는것.seed([_조회봉(10, 0, 1)], 주간)
-
-    assert 만드는것.open_bar is not None and 만드는것.open_bar.close == 100.0
-    assert [one.close for one in 만드는것.bars] == [1.0], "닫힌 자리는 조회 봉이 채웁니다."
+    (봉,) = 만드는것.bars
+    assert (봉.timestamp, 봉.open, 봉.close, 봉.volume) == (오늘, 99.0, 100.0, 8.0)
 
 
 def test_시각이나_가격이_없는_체결은_버리고_센다():
@@ -241,12 +458,26 @@ def test_일봉은_판정할_봉을_창으로_가리지_않는다():
     만드는것 = bars.BarBuilder(bars.DAILY_BAR)
     만드는것.add(_체결(19, 0, 100.0), 야간)
     만드는것.close()
-    만드는것.add(_체결(10, 0, 104.0, day=18), 주간)
+    만드는것.add(_체결(10, 0, 104.0, day=19), 주간)
     만드는것.close()
 
     assert 만드는것.daily is True
     assert 만드는것.judged(주간) == [0, 1]
     assert 만드는것.judged(야간) == [0, 1]
+
+
+def test_일봉은_세션_끝으로_닫혀도_같은_거래일이면_한_봉이다():
+    """17일 밤과 18일 낮은 같은 18일 거래일입니다."""
+    만드는것 = bars.BarBuilder(bars.DAILY_BAR)
+    만드는것.add(_체결(19, 0, 100.0, quantity=2), 야간)
+    만드는것.close()
+    만드는것.add(_체결(10, 0, 104.0, day=18), 주간)
+    (닫힌것,) = 만드는것.close()
+
+    (봉,) = 만드는것.bars
+    assert 봉 == 닫힌것
+    assert (봉.timestamp, 봉.open, 봉.close, 봉.volume) == (_때(0, 0, day=18), 100.0, 104.0, 3.0)
+    assert 만드는것.sessions == [야간], "그 거래일의 첫 체결이 온 창입니다."
 
 
 def test_분봉은_제_창의_봉만_고른다():

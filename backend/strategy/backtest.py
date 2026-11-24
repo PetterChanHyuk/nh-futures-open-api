@@ -357,6 +357,8 @@ def compute(
     if len(bars) < need or begin >= len(bars):
         return answer
 
+    # 앞에 깔 봉이 없어도 받은 봉 전부의 칸 기준으로 풀어 넣습니다.
+    made.bars.learn_grid((one.timestamp for one in bars), session)
     made.seed([_row_of(one) for one in bars[:begin]], session)
     fed = bars[begin:]
     fed_keys = keys[begin:]
