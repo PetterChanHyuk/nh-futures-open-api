@@ -40,6 +40,7 @@ class RateLimiter:
         self._sleep = sleep
         self._lock = threading.Lock()
         self._next_allowed: dict[tuple[str, str, Limit], float] = {}
+        self._turns: dict[tuple[str, str, Limit], threading.Lock] = {}
 
     @staticmethod
     def interval(limit: Limit) -> float:
@@ -55,16 +56,26 @@ class RateLimiter:
         interval = self.interval(limit)
         key = (environment, market, limit)
 
-        with self._lock:
+        # 같은 계좌·등급은 한 번에 하나씩 기다립니다. 앞 요청이 **실제로 나간
+        # 시각**을 보고 다음 간격을 재야 하기 때문입니다. 잠은 예정보다 늦게 깰
+        # 수 있는데, 다음 자리를 미리 잡아 두면 늦게 깬 요청과 다음 요청이 간격
+        # 없이 붙어 나갑니다. 다른 계좌·등급은 서로 막지 않습니다.
+        with self._turn(key):
             now = self._monotonic()
-            allowed_at = self._next_allowed.get(key, now)
-            delay = max(0.0, allowed_at - now)
-            # 다음 요청은 이번 요청을 보내는 시각 기준으로 한 칸 뒤입니다.
-            self._next_allowed[key] = max(allowed_at, now) + interval
-
-        if delay > 0:
-            self._sleep(delay)
+            allowed_at = max(self._next_allowed.get(key, now), now)
+            delay = allowed_at - now
+            if delay > 0:
+                self._sleep(delay)
+            # 일찍 깼다고 앞당기지는 않습니다 — 예정 시각보다 이르게 잡으면 간격이
+            # 줄어듭니다.
+            sent_at = max(self._monotonic(), allowed_at)
+            with self._lock:
+                self._next_allowed[key] = sent_at + interval
         return delay
+
+    def _turn(self, key: tuple[str, str, Limit]) -> threading.Lock:
+        with self._lock:
+            return self._turns.setdefault(key, threading.Lock())
 
     def reset(self) -> None:
         """지금까지의 간격 기록을 버립니다."""

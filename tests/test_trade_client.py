@@ -1,5 +1,6 @@
 """거래 API 공통 호출부."""
 import json
+import threading
 
 import httpx
 import pytest
@@ -465,3 +466,138 @@ def test_본문이_재발급을_말해도_한_번_다시_받는다(config):
     assert 결과.http_status == 200
     assert 서버_.본요청 == 2, "같은 요청을 한 번만 다시 보냅니다."
     assert 서버_.토큰요청 == 2, "토큰을 새로 받아 붙입니다."
+
+
+# ── 호출 간격: 기다림이 늦게 끝날 때 ─────────────────────────
+
+
+class 시계:
+    """잠들면 그만큼 시간이 흐르는 가짜 시계. `늦잠` 만큼 더 늦게 깹니다."""
+
+    def __init__(self):
+        self.지금 = 0.0
+        self.늦잠: list[float] = []
+        self.잔것: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.지금
+
+    def sleep(self, seconds: float) -> None:
+        self.잔것.append(seconds)
+        self.지금 += seconds + (self.늦잠.pop(0) if self.늦잠 else 0.0)
+
+
+@pytest.mark.parametrize(("등급", "간격"), [(Limit.QUOTE, 0.1), (Limit.ORDER, 0.2)])
+def test_늦게_깨면_다음_간격은_실제로_보낸_시각부터_잰다(등급, 간격):
+    """두 번째 요청이 0.3초 늦게 깼으면 세 번째는 그 시각에서 한 칸 뒤에 나갑니다."""
+    가짜 = 시계()
+    limiter = RateLimiter(monotonic=가짜.monotonic, sleep=가짜.sleep)
+    보낸시각 = []
+
+    limiter.wait("real", "domestic", 등급)
+    보낸시각.append(가짜.지금)
+    가짜.늦잠 = [0.3]
+    limiter.wait("real", "domestic", 등급)
+    보낸시각.append(가짜.지금)
+    limiter.wait("real", "domestic", 등급)
+    보낸시각.append(가짜.지금)
+
+    assert 보낸시각 == pytest.approx([0.0, 간격 + 0.3, 간격 * 2 + 0.3])
+
+
+def test_제때_깨면_간격은_그대로다():
+    가짜 = 시계()
+    limiter = RateLimiter(monotonic=가짜.monotonic, sleep=가짜.sleep)
+    보낸시각 = []
+
+    for _ in range(4):
+        limiter.wait("real", "domestic", Limit.QUOTE)
+        보낸시각.append(가짜.지금)
+
+    assert 보낸시각 == pytest.approx([0.0, 0.1, 0.2, 0.3])
+
+
+def test_토큰을_다시_받아_보내는_요청도_호출_간격을_지킨다(config):
+    """401 뒤 다시 보내는 것도 요청 한 건입니다 — 간격 없이 나가면 안 됩니다."""
+    잔것 = []
+    limiter = RateLimiter(monotonic=lambda: 0.0, sleep=잔것.append)
+    서버_ = 한번은거절하는서버(httpx.Response(200, json=현재가))
+    client = TradeClient(세션(config, 서버_), limiter=limiter)
+
+    결과 = client.call("domestic_price", {"sym": "A7569000"})
+
+    assert 결과.http_status == 200
+    assert 서버_.본요청 == 2
+    assert 잔것 == pytest.approx([0.1]), "다시 보내기 전에 한 칸 기다립니다."
+
+
+def test_본문이_재발급을_말해_다시_보내는_요청도_호출_간격을_지킨다(config):
+    잔것 = []
+    limiter = RateLimiter(monotonic=lambda: 0.0, sleep=잔것.append)
+    서버_ = 토큰을거절하는서버(httpx.Response(200, json=현재가))
+    client = TradeClient(세션(config, 서버_), limiter=limiter)
+
+    client.call("domestic_price", {"sym": "A7569000"})
+
+    assert 서버_.본요청 == 2
+    assert 잔것 == pytest.approx([0.1])
+
+
+class 붙잡는시계(시계):
+    """첫 잠은 `문` 이 열릴 때까지 붙잡아 두고, 연 뒤에는 `늦게` 만큼 늦게 깹니다."""
+
+    def __init__(self, 늦게: float):
+        super().__init__()
+        self.문 = threading.Event()
+        self.잠듦 = threading.Event()
+        self.늦게 = 늦게
+        self.첫잠 = True
+
+    def sleep(self, seconds: float) -> None:
+        시작 = self.지금
+        첫잠, self.첫잠 = self.첫잠, False
+        if 첫잠:
+            self.잠듦.set()
+            assert self.문.wait(5), "시험이 문을 열지 않았습니다."
+        self.잔것.append(seconds)
+        self.지금 = max(self.지금, 시작 + seconds + (self.늦게 if 첫잠 else 0.0))
+
+
+def test_여러_스레드도_앞_요청이_실제로_나간_뒤에_간격을_잰다():
+    """앞 요청이 잠든 사이 다음 요청이 미리 잡아 둔 자리로 먼저 나가면, 앞 요청이 늦게
+    깨어 둘이 간격 없이 붙습니다. 다음 요청은 앞 요청이 나갈 때까지 기다립니다."""
+    가짜 = 붙잡는시계(늦게=0.15)
+    limiter = RateLimiter(monotonic=가짜.monotonic, sleep=가짜.sleep)
+    limiter.wait("real", "domestic", Limit.QUOTE)  # 0.00 에 한 건
+
+    앞 = threading.Thread(target=limiter.wait, args=("real", "domestic", Limit.QUOTE))
+    앞.start()
+    assert 가짜.잠듦.wait(5)
+    뒤 = threading.Thread(target=limiter.wait, args=("real", "domestic", Limit.QUOTE))
+    뒤.start()
+    뒤.join(0.2)
+    assert 뒤.is_alive(), "앞 요청이 나가기 전에는 나가지 않습니다."
+
+    가짜.문.set()  # 앞 요청은 0.10 이 아니라 0.25 에 깹니다
+    앞.join(5)
+    뒤.join(5)
+
+    assert 가짜.잔것 == pytest.approx([0.1, 0.1])
+    assert 가짜.지금 == pytest.approx(0.35), "뒤 요청은 0.25 에서 한 칸 뒤에 나갑니다."
+
+
+def test_다른_계좌는_앞_요청이_잠들어_있어도_막히지_않는다():
+    가짜 = 붙잡는시계(늦게=0.0)
+    limiter = RateLimiter(monotonic=가짜.monotonic, sleep=가짜.sleep)
+    limiter.wait("real", "domestic", Limit.QUOTE)
+
+    앞 = threading.Thread(target=limiter.wait, args=("real", "domestic", Limit.QUOTE))
+    앞.start()
+    assert 가짜.잠듦.wait(5)
+    다른 = threading.Thread(target=limiter.wait, args=("real", "overseas", Limit.QUOTE))
+    다른.start()
+    다른.join(5)
+    assert not 다른.is_alive(), "해외 계좌는 국내 계좌를 기다리지 않습니다."
+
+    가짜.문.set()
+    앞.join(5)

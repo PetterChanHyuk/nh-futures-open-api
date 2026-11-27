@@ -519,3 +519,22 @@ def test_호가_열은_적은_값을_봉_시각으로_찾는다():
 
     assert series.values["bid1"] == [None, 9.9, None]
     assert series.values["ask1"] == [None, 10.1, None]
+
+
+def test_수로_적은_비교값은_0_도_값이다():
+    """API·JSON 으로 만들면 비교값이 글자가 아니라 수로 옵니다. 0 을 빈칸으로 읽으면
+    저장 검사는 통과한 조건이 실행에서는 늘 거짓이 됩니다."""
+    series = rules.series_of(_bars([10, 10]), marks=_적은값({"openPl": [5.0, -5.0]}))
+
+    for 값 in (0, 0.0, "0", "0.0", " 0 "):
+        assert rules.right_at(_cond("volume", "gt", 값), series, 0) == 0.0, 값
+    assert rules.cond_at(_cond("volume", "gt", 0), series, 0), "거래량 10 > 0"
+    assert rules.cond_at(_cond("openPl", "lt", 0), series, 1), "평가손익 -5 < 0"
+    assert not rules.cond_at(_cond("openPl", "lt", 0), series, 0), "평가손익 5 < 0 은 거짓"
+
+
+def test_수로_적은_비교값이_비었거나_수가_아니면_모른다():
+    series = rules.series_of(_bars([10]))
+
+    for 값 in (None, "", "  ", "abc"):
+        assert rules.right_at(_cond("volume", "gt", 값), series, 0) is None, 값

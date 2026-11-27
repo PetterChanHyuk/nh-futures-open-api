@@ -620,8 +620,11 @@ def right_at(
         if str(cond.get("left") or "") == CLOCK:
             parsed = parse_clock(cond.get("right"))
             return None if parsed is None else float(clock_of(*parsed, series.session))
+        # 비교값은 화면에서는 글자로, API·JSON 으로는 수로 올 수 있습니다. 수 0 을
+        # `or` 로 거르면 빈칸이 되어 저장 검사는 통과한 조건이 늘 거짓이 됩니다.
+        right = cond.get("right")
         try:
-            return float(str(cond.get("right") or "").strip())
+            return float(str(right if right is not None else "").strip())
         except ValueError:
             return None
     return series.at(key if key is not None else side_key(cond, "right"), index)

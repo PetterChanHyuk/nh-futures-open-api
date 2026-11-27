@@ -170,7 +170,10 @@ class TradeClient:
             # **본문의 오류 코드도 같은 길입니다.** 상태가 200 이어도 토큰을
             # 다시 받으라는 코드(`EGW052` 같은 것)가 본문에 담겨 옵니다 —
             # 상태만 보면 그 자리를 놓칩니다.
+            #
+            # 다시 보내는 것도 요청 한 건이라 **호출 간격을 다시 지킵니다.**
             self._session.tokens.forget(spec.market, environment)
+            self._limiter.wait(environment, spec.market, spec.limit)
             response = self._send(spec, body_to_send, environment)
             body = _peek(response)
             trouble = error_codes.failure_of(body)
